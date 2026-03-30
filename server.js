@@ -3,6 +3,10 @@ const cors = require('cors');
 require('dotenv').config();
 const db = require('./db');
 
+// --- ADD THE SCHEDULER RIGHT HERE ---
+require('./scheduler');
+// ------------------------------------
+
 const app = express();
 
 app.use(cors());
