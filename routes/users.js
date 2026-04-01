@@ -15,15 +15,18 @@ router.get('/', async (req, res) => {
 
 // 2. POST: Add a new contractor (They default to active in the DB!)
 router.post('/', async (req, res) => {
-  const { first_name, last_name, default_hourly_rate, email } = req.body;
+  // NEW: We added billing_rate here to catch it from React!
+  const { first_name, last_name, default_hourly_rate, billing_rate, email } = req.body;
   try {
     const newQuery = `
-      INSERT INTO users (first_name, last_name, default_hourly_rate, email)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO users (first_name, last_name, default_hourly_rate, billing_rate, email)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING *;
     `;
-    const values = [first_name, last_name, parseFloat(default_hourly_rate), email];
+    // Make sure we parse it as a float so the database treats it as a number
+    const values = [first_name, last_name, parseFloat(default_hourly_rate), parseFloat(billing_rate), email];
     const result = await db.query(newQuery, values);
+    
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) {
     console.error("Backend Crash Error:", err.message);
@@ -31,20 +34,28 @@ router.post('/', async (req, res) => {
   }
 });
 
-// 3. PUT: The "Gold Standard" Edit Route (Now handles is_active!)
+// 3. PUT: The "Gold Standard" Edit Route (Now handles is_active AND billing_rate!)
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { first_name, last_name, email, default_hourly_rate, is_active } = req.body;
+  
+  // NEW: We added billing_rate here as well
+  const { first_name, last_name, email, default_hourly_rate, billing_rate, is_active } = req.body;
 
   try {
     const updateQuery = `
       UPDATE users 
-      SET first_name = $1, last_name = $2, email = $3, default_hourly_rate = $4, is_active = $5
-      WHERE id = $6 
+      SET first_name = $1, 
+          last_name = $2, 
+          email = $3, 
+          default_hourly_rate = $4, 
+          billing_rate = $5, 
+          is_active = $6
+      WHERE id = $7 
       RETURNING *;
     `;
-    // Notice we added is_active to the array of values saving to the database
-    const values = [first_name, last_name, email, parseFloat(default_hourly_rate), is_active, id];
+    
+    // Notice we added parseFloat(billing_rate) to the array of values!
+    const values = [first_name, last_name, email, parseFloat(default_hourly_rate), parseFloat(billing_rate), is_active, id];
     const result = await db.query(updateQuery, values);
 
     if (result.rowCount === 0) {

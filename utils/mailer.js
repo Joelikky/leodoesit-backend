@@ -137,4 +137,67 @@ const sendTimesheetReminder = async (contractorEmail, contractorName, monthName)
     }
 };
 
-module.exports = { sendTimesheetReminder };
+/**
+ * Sends the generated PDF Invoice to the Prime Vendor/Client
+ * Fully optimized to bypass spam filters.
+ */
+const sendInvoiceEmail = async (clientEmail, contractorName, monthName, pdfPath) => {
+    const subjectLine = `New Invoice: ${contractorName} - ${monthName} Services`;
+    
+    // Plain Text Version (Crucial for spam bypass)
+    const textVersion = `
+        Hello,
+        
+        Please find attached the official invoice for contractor services provided by ${contractorName} for the billing period of ${monthName}.
+        
+        Thank you for your continued business!
+        Leo
+        Leodoes It Management
+
+        -------------------------------------------------
+        You are receiving this automated email because you are 
+        registered as an active client of Leodoes It.
+    `;
+
+    // HTML Version (Clean, professional, no spammy buzzwords)
+    const htmlVersion = `
+        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px;">
+            <h2>Hello,</h2>
+            <p>Please find attached the official invoice for contractor services provided by <strong>${contractorName}</strong> for the billing period of <strong>${monthName}</strong>.</p>
+            <p>If you have any questions regarding these billed hours, simply reply directly to this email.</p>
+            <br/>
+            <p>Thank you for your continued business!</p>
+            <p><strong>Leo</strong><br/>Leodoes It Management</p>
+            
+            <hr style="border: none; border-top: 1px solid #eee; margin-top: 30px;" />
+            <p style="font-size: 11px; color: #888;">
+                You are receiving this automated email because you are registered as an active client of Leodoes It.
+            </p>
+        </div>
+    `;
+
+    try {
+        const info = await transporter.sendMail({
+            from: `"Leodoes It Accounts" <${process.env.EMAIL_USER}>`, 
+            replyTo: process.env.EMAIL_USER, // Forces spam filters to see it as a 2-way conversation
+            to: clientEmail,
+            subject: subjectLine,
+            text: textVersion,
+            html: htmlVersion,
+            attachments: [
+                {
+                    filename: `Invoice_${contractorName.replace(/\s+/g, '_')}_${monthName}.pdf`,
+                    path: pdfPath // Securely attaches the PDF generated on your server
+                }
+            ]
+        });
+        console.log(`Invoice successfully emailed to ${clientEmail}: ${info.messageId}`);
+        return true;
+    } catch (error) {
+        console.error(`Failed to send invoice to ${clientEmail}:`, error);
+        return false;
+    }
+};
+
+// Make sure to export BOTH functions now!
+module.exports = { sendTimesheetReminder, sendInvoiceEmail };
