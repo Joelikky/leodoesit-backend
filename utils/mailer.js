@@ -138,6 +138,61 @@ const sendTimesheetReminder = async (contractorEmail, contractorName, monthName)
 };
 
 /**
+ * Sends a timesheet rejection email with the specific reason.
+ */
+const sendRejectionEmail = async (contractorEmail, contractorName, billingPeriod, reason) => {
+    const subjectLine = `Action Required: Timesheet Rejected for ${billingPeriod}`;
+    
+    const textVersion = `
+        Hello ${contractorName},
+        
+        Your submitted timesheet for the period of ${billingPeriod} has been reviewed and requires corrections.
+        
+        Reason for rejection:
+        "${reason}"
+        
+        Please log into your contractor portal, make the necessary adjustments, and resubmit your hours.
+        
+        Thank you,
+        Leo
+        Leodoes It Management
+    `;
+
+    const htmlVersion = `
+        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px;">
+            <h2 style="color: #EF4444;">Timesheet Requires Correction</h2>
+            <p>Hello <strong>${contractorName}</strong>,</p>
+            <p>Your submitted timesheet for the period of <strong>${billingPeriod}</strong> has been reviewed and requires corrections before it can be approved.</p>
+            
+            <div style="background-color: #FEF2F2; border-left: 4px solid #EF4444; padding: 15px; margin: 20px 0;">
+                <p style="margin: 0; color: #991B1B;"><strong>Reason for rejection:</strong></p>
+                <p style="margin: 5px 0 0 0; color: #7F1D1D;"><i>"${reason}"</i></p>
+            </div>
+            
+            <p>Please log into your contractor portal, make the necessary adjustments, and resubmit your hours.</p>
+            <br/>
+            <p>Thank you,</p>
+            <p><strong>Leo</strong><br/>Leodoes It Management</p>
+        </div>
+    `;
+
+    try {
+        const info = await transporter.sendMail({
+            from: `"Leodoes It Accounts" <${process.env.EMAIL_USER}>`, 
+            to: contractorEmail,
+            subject: subjectLine,
+            text: textVersion,
+            html: htmlVersion,
+        });
+        console.log(`Rejection email sent to ${contractorEmail}`);
+        return true;
+    } catch (error) {
+        console.error(`Failed to send rejection to ${contractorEmail}:`, error);
+        return false;
+    }
+};
+
+/**
  * Sends the generated PDF Invoice to the Prime Vendor/Client
  * Fully optimized to bypass spam filters.
  */
@@ -200,4 +255,4 @@ const sendInvoiceEmail = async (clientEmail, contractorName, monthName, pdfPath)
 };
 
 // Make sure to export BOTH functions now!
-module.exports = { sendTimesheetReminder, sendInvoiceEmail };
+module.exports = { sendTimesheetReminder, sendInvoiceEmail, sendRejectionEmail };

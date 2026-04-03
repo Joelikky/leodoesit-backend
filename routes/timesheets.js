@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const multer = require('multer');
 const path = require('path');
+const { sendRejectionEmail } = require('../utils/mailer');
 
 // --- MULTER LUGGAGE HANDLER SETUP ---
 const storage = multer.diskStorage({
@@ -113,15 +114,55 @@ router.put('/:id/approve', async (req, res) => {
   }
 });
 
-// 5. PUT ROUTE: Reject a timesheet (Unlocks the employee's portal!)
+// // 5. PUT ROUTE: Reject a timesheet (Unlocks the employee's portal!)
+// router.put('/:id/reject', async (req, res) => {
+//   const { id } = req.params;
+//   try {
+//     const result = await db.query(
+//       "UPDATE timesheets SET status = 'REJECTED' WHERE id = $1 RETURNING *", 
+//       [id]
+//     );
+//     res.json({ success: true, data: result.rows[0] });
+//   } catch (err) {
+//     console.error(err.message);
+//     res.status(500).json({ success: false, error: "Failed to reject timesheet." });
+//   }
+// });
+
+// PUT: Reject a timesheet and send email
 router.put('/:id/reject', async (req, res) => {
   const { id } = req.params;
+  const { rejection_reason } = req.body; // Catch the reason from React!
+
+  if (!rejection_reason) {
+      return res.status(400).json({ success: false, error: "A rejection reason is required." });
+  }
+
   try {
-    const result = await db.query(
-      "UPDATE timesheets SET status = 'REJECTED' WHERE id = $1 RETURNING *", 
-      [id]
-    );
-    res.json({ success: true, data: result.rows[0] });
+    // 1. Update the database with the status AND the reason
+    const updateQuery = `
+      UPDATE timesheets 
+      SET status = 'REJECTED', rejection_reason = $1
+      WHERE id = $2 
+      RETURNING *;
+    `;
+    const result = await db.query(updateQuery, [rejection_reason, id]);
+
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: "Timesheet not found" });
+
+    const timesheet = result.rows[0];
+
+    // 2. Fetch the contractor's email to send the message
+    const userQuery = await db.query('SELECT first_name, last_name, email FROM users WHERE id = $1', [timesheet.user_id]);
+    const user = userQuery.rows[0];
+
+    // 3. Fire off the email!
+    const billingPeriod = `${new Date(timesheet.period_start).toLocaleDateString()} - ${new Date(timesheet.period_end).toLocaleDateString()}`;
+    const contractorName = `${user.first_name} ${user.last_name}`;
+    
+    await sendRejectionEmail(user.email, contractorName, billingPeriod, rejection_reason);
+
+    res.json({ success: true, message: "Timesheet rejected and email sent!", data: timesheet });
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ success: false, error: "Failed to reject timesheet." });
