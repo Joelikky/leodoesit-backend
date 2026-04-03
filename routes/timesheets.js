@@ -8,10 +8,9 @@ const { sendRejectionEmail } = require('../utils/mailer');
 // --- MULTER LUGGAGE HANDLER SETUP ---
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/'); // Save files to our new folder
+    cb(null, 'uploads/');
   },
   filename: function (req, file, cb) {
-    // Give every file a unique name so they don't overwrite each other!
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
@@ -22,13 +21,14 @@ const upload = multer({ storage: storage });
 // 1. GET ROUTE: Fetch ALL timesheets (For the Admin Queue)
 router.get('/', async (req, res) => {
   const { status } = req.query; 
-
   try {
+    // UPDATED: Joined employee_details to grab the new pay_rate
     let query = `
       SELECT t.id, t.period_start, t.period_end, t.total_hours, t.status, t.screenshot_urls,
-             u.first_name, u.last_name, u.default_hourly_rate
+             u.first_name, u.last_name, e.pay_rate
       FROM timesheets t
       JOIN users u ON t.user_id = u.id
+      LEFT JOIN employee_details e ON u.id = e.user_id
     `;
     let values = [];
 
@@ -36,7 +36,6 @@ router.get('/', async (req, res) => {
       query += ` WHERE t.status = $1`;
       values.push(status);
     }
-
     query += ` ORDER BY t.created_at DESC;`;
 
     const result = await db.query(query, values);
@@ -47,7 +46,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 2. GET ROUTE: Fetch timesheets ONLY for the logged-in contractor (For the Employee Portal)
+// 2. GET ROUTE: Fetch timesheets ONLY for the logged-in contractor
 router.get('/me/:email', async (req, res) => {
   const { email } = req.params;
   try {
@@ -57,7 +56,7 @@ router.get('/me/:email', async (req, res) => {
       JOIN users u ON t.user_id = u.id
       WHERE u.email = $1
       ORDER BY t.created_at DESC
-      LIMIT 1; -- We only care about their most recent submission!
+      LIMIT 1;
     `;
     const result = await db.query(query, [email]);
     res.json({ success: true, data: result.rows[0] || null });
@@ -72,7 +71,6 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
   const { user_id, period_start, period_end, total_hours } = req.body;
   
   try {
-    // Map the uploaded files to their new public URLs on your server
     const screenshot_urls = req.files ? req.files.map(file => `http://localhost:5000/uploads/${file.filename}`) : [];
 
     const query = `
@@ -93,20 +91,10 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
 // 4. PUT ROUTE: Approve a timesheet
 router.put('/:id/approve', async (req, res) => {
   const { id } = req.params; 
-
   try {
-    const updateQuery = `
-      UPDATE timesheets 
-      SET status = 'APPROVED' 
-      WHERE id = $1 
-      RETURNING *;
-    `;
+    const updateQuery = `UPDATE timesheets SET status = 'APPROVED' WHERE id = $1 RETURNING *;`;
     const result = await db.query(updateQuery, [id]);
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({ success: false, error: "Timesheet not found" });
-    }
-
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: "Timesheet not found" });
     res.json({ success: true, message: "Timesheet officially approved!", data: result.rows[0] });
   } catch (err) {
     console.error(err.message);
@@ -114,49 +102,23 @@ router.put('/:id/approve', async (req, res) => {
   }
 });
 
-// // 5. PUT ROUTE: Reject a timesheet (Unlocks the employee's portal!)
-// router.put('/:id/reject', async (req, res) => {
-//   const { id } = req.params;
-//   try {
-//     const result = await db.query(
-//       "UPDATE timesheets SET status = 'REJECTED' WHERE id = $1 RETURNING *", 
-//       [id]
-//     );
-//     res.json({ success: true, data: result.rows[0] });
-//   } catch (err) {
-//     console.error(err.message);
-//     res.status(500).json({ success: false, error: "Failed to reject timesheet." });
-//   }
-// });
-
-// PUT: Reject a timesheet and send email
+// 5. PUT: Reject a timesheet and send email
 router.put('/:id/reject', async (req, res) => {
   const { id } = req.params;
-  const { rejection_reason } = req.body; // Catch the reason from React!
+  const { rejection_reason } = req.body; 
 
-  if (!rejection_reason) {
-      return res.status(400).json({ success: false, error: "A rejection reason is required." });
-  }
+  if (!rejection_reason) return res.status(400).json({ success: false, error: "A rejection reason is required." });
 
   try {
-    // 1. Update the database with the status AND the reason
-    const updateQuery = `
-      UPDATE timesheets 
-      SET status = 'REJECTED', rejection_reason = $1
-      WHERE id = $2 
-      RETURNING *;
-    `;
+    const updateQuery = `UPDATE timesheets SET status = 'REJECTED', rejection_reason = $1 WHERE id = $2 RETURNING *;`;
     const result = await db.query(updateQuery, [rejection_reason, id]);
 
     if (result.rowCount === 0) return res.status(404).json({ success: false, error: "Timesheet not found" });
 
     const timesheet = result.rows[0];
-
-    // 2. Fetch the contractor's email to send the message
     const userQuery = await db.query('SELECT first_name, last_name, email FROM users WHERE id = $1', [timesheet.user_id]);
     const user = userQuery.rows[0];
 
-    // 3. Fire off the email!
     const billingPeriod = `${new Date(timesheet.period_start).toLocaleDateString()} - ${new Date(timesheet.period_end).toLocaleDateString()}`;
     const contractorName = `${user.first_name} ${user.last_name}`;
     
