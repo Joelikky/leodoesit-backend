@@ -27,10 +27,11 @@ router.post('/login', async (req, res) => {
     // 4. Give them the VIP pass
     res.json({ success: true, message: "Login successful!", data: user });
     
-  } catch (err) {
-    console.error("Backend Crash Error:", err.message);
-    res.status(500).json({ success: false, error: "Server error during login." });
-  }
+  
+} catch (err) {
+  console.error("Backend Crash Error:", err); // Use a comma! // OR something similar
+  res.status(500).json({ message: "Server error during login." }); 
+}
 });
 
 module.exports = router;
