@@ -1,19 +1,24 @@
-// test.js
 require('dotenv').config();
 const { sendTimesheetReminder } = require('./utils/mailer');
 
 async function runTest() {
-    console.log("Attempting to send test email...");
+    console.log("Preparing to send the Timesheet Reminder...");
+
+    // 👇 REPLACE THIS WITH YOUR REAL GMAIL/PERSONAL EMAIL 👇
+    const testEmail = "invoice.leo@outlook.com"; 
     
-    // Replace this with your own personal email address to see if it arrives!
-    const testEmail = "neovamsisai@gmail.com"; 
-    
-    const success = await sendTimesheetReminder(testEmail, "Leo (Test)", "April");
-    
+    // Using realistic test data
+    const contractorName = "Alex Contractor";
+    const billingPeriod = "April 2026"; 
+
+    // Trigger the function you wrote in mailer.js
+    const success = await sendTimesheetReminder(testEmail, contractorName, billingPeriod);
+
     if (success) {
-        console.log("🎉 SUCCESS! The Microsoft App Password works perfectly!");
+        console.log(`\n🎉 SUCCESS! The email was sent to ${testEmail}.`);
+        console.log("Go check your inbox (and your spam folder just in case)!");
     } else {
-        console.log("❌ FAILED. Double check your .env file!");
+        console.log("\n❌ FAILED. Check the error messages above.");
     }
 }
 
