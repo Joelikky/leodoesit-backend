@@ -1,17 +1,20 @@
-// test.js (Testing the Smart Invoice Generation)
-fetch('http://localhost:5000/api/invoices', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      client_id: "3dd2792a-c5a7-47a1-9e67-86164158a0c0",
-      timesheet_id: "402495cb-f516-4efb-aab9-75d17af3c1df"
-    })
-  })
-    .then(response => response.json())
-    .then(data => console.log("Invoice Response:", data))
-    .catch(error => console.error("Error:", error));
+// test.js
+require('dotenv').config();
+const { sendTimesheetReminder } = require('./utils/mailer');
 
+async function runTest() {
+    console.log("Attempting to send test email...");
+    
+    // Replace this with your own personal email address to see if it arrives!
+    const testEmail = "neovamsisai@gmail.com"; 
+    
+    const success = await sendTimesheetReminder(testEmail, "Leo (Test)", "April");
+    
+    if (success) {
+        console.log("🎉 SUCCESS! The Microsoft App Password works perfectly!");
+    } else {
+        console.log("❌ FAILED. Double check your .env file!");
+    }
+}
 
-
+runTest();
