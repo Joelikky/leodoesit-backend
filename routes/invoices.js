@@ -14,7 +14,8 @@ router.get('/', async (req, res) => {
         i.id, 
         i.invoice_number, 
         i.status, 
-        i.due_date, 
+        i.due_date,
+        i.emailed_at,
         c.company_name AS client_name,
         u.first_name, 
         u.last_name,
@@ -166,8 +167,12 @@ router.post('/:id/send', async (req, res) => {
       const emailSent = await sendInvoiceEmail(clientEmail, contractorFullName, monthName, pdfPath);
 
       if (emailSent) {
-          res.json({ success: true, message: `Email sent to ${clientEmail}!` });
-      } else {
+        // <-- ADD THESE TWO LINES -->
+        const stampQuery = `UPDATE invoices SET emailed_at = CURRENT_TIMESTAMP WHERE id = $1`;
+        await db.query(stampQuery, [invoiceId]);
+
+        res.json({ success: true, message: `Email sent to ${clientEmail}!` });
+    } else {
           res.status(500).json({ success: false, error: "Failed to send email via NodeMailer." });
       }
   } catch (error) {

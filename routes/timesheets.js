@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
     // UPDATED: Joined employee_details to grab the new pay_rate
     let query = `
       SELECT t.id, t.period_start, t.period_end, t.total_hours, t.status, t.screenshot_urls,
-             u.first_name, u.last_name, e.pay_rate
+             u.first_name, u.last_name, e.pay_rate, e.vendor_name
       FROM timesheets t
       JOIN users u ON t.user_id = u.id
       LEFT JOIN employee_details e ON u.id = e.user_id
@@ -128,6 +128,22 @@ router.put('/:id/reject', async (req, res) => {
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ success: false, error: "Failed to reject timesheet." });
+  }
+});
+
+// 6. PUT ROUTE: Void a timesheet (Send back to Approval Queue)
+router.put('/:id/void', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const updateQuery = `UPDATE timesheets SET status = 'SUBMITTED' WHERE id = $1 RETURNING *;`;
+    const result = await db.query(updateQuery, [id]);
+    
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: "Timesheet not found" });
+    
+    res.json({ success: true, message: "Timesheet voided back to the approval queue!", data: result.rows[0] });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ success: false, error: "Failed to void timesheet." });
   }
 });
 
