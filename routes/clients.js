@@ -15,15 +15,18 @@ router.get('/', async (req, res) => {
 
 // 2. POST ROUTE: Add a new client
 router.post('/', async (req, res) => {
-  const { company_name, billing_email } = req.body;
+  // --- UPGRADED: Catching the new vendor details from React ---
+  const { company_name, billing_email, net_terms, vendor_address } = req.body;
+  
   try {
     const newQuery = `
-      INSERT INTO clients (company_name, billing_email)
-      VALUES ($1, $2)
+      INSERT INTO clients (company_name, billing_email, net_terms, vendor_address)
+      VALUES ($1, $2, $3, $4)
       RETURNING *;
     `;
-    const values = [company_name, billing_email || null];
+    const values = [company_name, billing_email || null, net_terms || null, vendor_address || null];
     const result = await db.query(newQuery, values);
+    
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (err) {
     console.error("Backend Crash Error:", err.message);
@@ -34,16 +37,17 @@ router.post('/', async (req, res) => {
 // 3. PUT ROUTE: Edit a client (The Diamond Upgrade)
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { company_name, billing_email, is_active } = req.body;
+  // --- UPGRADED: Catching the new vendor details from React ---
+  const { company_name, billing_email, is_active, net_terms, vendor_address } = req.body;
 
   try {
     const updateQuery = `
       UPDATE clients 
-      SET company_name = $1, billing_email = $2, is_active = $3
-      WHERE id = $4 
+      SET company_name = $1, billing_email = $2, is_active = $3, net_terms = $4, vendor_address = $5
+      WHERE id = $6 
       RETURNING *;
     `;
-    const values = [company_name, billing_email, is_active, id];
+    const values = [company_name, billing_email, is_active, net_terms, vendor_address, id];
     const result = await db.query(updateQuery, values);
 
     if (result.rowCount === 0) {
