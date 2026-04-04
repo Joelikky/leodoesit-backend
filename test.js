@@ -1,17 +1,25 @@
-// test.js (Testing the Smart Invoice Generation)
-fetch('http://localhost:5000/api/invoices', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      client_id: "3dd2792a-c5a7-47a1-9e67-86164158a0c0",
-      timesheet_id: "402495cb-f516-4efb-aab9-75d17af3c1df"
-    })
-  })
-    .then(response => response.json())
-    .then(data => console.log("Invoice Response:", data))
-    .catch(error => console.error("Error:", error));
+require('dotenv').config();
+const { sendTimesheetReminder } = require('./utils/mailer');
 
+async function runTest() {
+    console.log("Preparing to send the Timesheet Reminder...");
 
+    // 👇 REPLACE THIS WITH YOUR REAL GMAIL/PERSONAL EMAIL 👇
+    const testEmail = "invoice.leo@outlook.com"; 
+    
+    // Using realistic test data
+    const contractorName = "Alex Contractor";
+    const billingPeriod = "April 2026"; 
 
+    // Trigger the function you wrote in mailer.js
+    const success = await sendTimesheetReminder(testEmail, contractorName, billingPeriod);
+
+    if (success) {
+        console.log(`\n🎉 SUCCESS! The email was sent to ${testEmail}.`);
+        console.log("Go check your inbox (and your spam folder just in case)!");
+    } else {
+        console.log("\n❌ FAILED. Check the error messages above.");
+    }
+}
+
+runTest();

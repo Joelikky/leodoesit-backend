@@ -41,10 +41,12 @@ router.post('/', async (req, res) => {
     // 🔥 THE FIX IS HERE: We explicitly ask the database for u.billing_rate!
     const mathQuery = `
       SELECT t.total_hours, t.period_start, t.period_end, 
-             u.id AS user_id, u.first_name, u.last_name, u.billing_rate,
+             u.id AS user_id, u.first_name, u.last_name, 
+             e.invoice_rate,
              c.company_name AS client_name
       FROM timesheets t
       JOIN users u ON t.user_id = u.id
+      LEFT JOIN employee_details e ON u.id = e.user_id
       JOIN clients c ON c.id = $1
       WHERE t.id = $2;
     `;
@@ -56,15 +58,14 @@ router.post('/', async (req, res) => {
 
     const data = mathResult.rows[0];
     
-    // 🔥 THE SECOND FIX: The Safety Check!
-    if (!data.billing_rate) {
-        return res.status(400).json({ success: false, error: "Contractor is missing a billing_rate in the database." });
+    // 🔥 THE SECOND FIX: Check for invoice_rate instead!
+    if (!data.invoice_rate) {
+        return res.status(400).json({ success: false, error: "Contractor is missing an invoice_rate in the database." });
     }
 
-    const hours =parseFloat(data.total_hours);
-    const rate = parseFloat(data.billing_rate);
+    const hours = parseFloat(data.total_hours);
+    const rate = parseFloat(data.invoice_rate); // Changed to use invoice_rate
     const invoiceNumber = `INV-${Math.floor(Date.now() / 1000)}`;
-
     // Generate the PDF
     const pdfFileName = `Invoice_TS_${timesheet_id}.pdf`;
     const pdfPath = path.join(__dirname, '..', 'invoices', pdfFileName); 
