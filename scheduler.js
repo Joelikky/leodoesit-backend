@@ -31,8 +31,16 @@ const generateMonthlyTimesheets = async () => {
         const periodStart = `${year}-${safeMonth}-01`;
         const periodEnd = `${year}-${safeMonth}-${lastDay}`;
 
+<<<<<<< HEAD
         // UPDATE: We now fetch the user's ID AND their tenant_id
         const usersResult = await db.query(`SELECT id, tenant_id FROM users`);
+=======
+        // 1. Fetch all users/contractors from the database
+        const usersResult = await db.query(`
+            SELECT id FROM users 
+            WHERE email != 'admin@leodoesit.com'
+        `);
+>>>>>>> 39e0febc973c2f52a7150cc786f4c0456c1c3847
         const users = usersResult.rows;
 
         if (users.length === 0) {
