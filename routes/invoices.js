@@ -41,16 +41,16 @@ router.post('/', async (req, res) => {
   try {
     // 🔥 THE FIX IS HERE: We explicitly ask the database for u.billing_rate!
     const mathQuery = `
-      SELECT t.total_hours, t.period_start, t.period_end, 
-             u.id AS user_id, u.first_name, u.last_name, 
-             e.invoice_rate,
-             c.company_name AS client_name
-      FROM timesheets t
-      JOIN users u ON t.user_id = u.id
-      LEFT JOIN employee_details e ON u.id = e.user_id
-      JOIN clients c ON c.id = $1
-      WHERE t.id = $2;
-    `;
+    SELECT t.total_hours, t.period_start, t.period_end, 
+           u.id AS user_id, u.first_name, u.last_name, 
+           e.invoice_rate, e.invoice_num, /* <--- ADDED THIS! */
+           c.company_name AS client_name
+    FROM timesheets t
+    JOIN users u ON t.user_id = u.id
+    LEFT JOIN employee_details e ON u.id = e.user_id
+    JOIN clients c ON c.id = $1
+    WHERE t.id = $2;
+  `;
     const mathResult = await db.query(mathQuery, [client_id, timesheet_id]);
     
     if (mathResult.rowCount === 0) {
@@ -66,7 +66,23 @@ router.post('/', async (req, res) => {
 
     const hours = parseFloat(data.total_hours);
     const rate = parseFloat(data.invoice_rate); // Changed to use invoice_rate
-    const invoiceNumber = `INV-${Math.floor(Date.now() / 1000)}`;
+
+    // --- NEW INVOICE NUMBER LOGIC: [YY][MM][BaseNumber] ---
+    // 1. Get the date from the timesheet
+    const dateObj = new Date(data.period_start); 
+    
+    // 2. Extract the 2-digit Year (e.g., '26')
+    const yy = dateObj.getFullYear().toString().slice(-2); 
+    
+    // 3. Extract the 2-digit Month (e.g., '04'). Add 1 because JavaScript months start at 0!
+    const mm = (dateObj.getMonth() + 1).toString().padStart(2, '0'); 
+    
+    // 4. Grab the Admin's base number (Fallback to '00' if the Admin forgot to set one)
+    const baseNum = data.invoice_num || '00'; 
+    
+    // 5. Combine them together!
+    const invoiceNumber = `${yy}${mm}${baseNum}`;
+    // -------------------------------------------------------
     // Generate the PDF
     const pdfFileName = `Invoice_TS_${timesheet_id}.pdf`;
     const pdfPath = path.join(__dirname, '..', 'invoices', pdfFileName); 

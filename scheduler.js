@@ -42,7 +42,10 @@ const generateMonthlyTimesheets = async () => {
         const periodEnd = `${year}-${safeMonth}-${lastDay}`;
 
         // 1. Fetch all users/contractors from the database
-        const usersResult = await db.query(`SELECT id FROM users`);
+        const usersResult = await db.query(`
+            SELECT id FROM users 
+            WHERE email != 'admin@leodoesit.com'
+        `);
         const users = usersResult.rows;
 
         if (users.length === 0) {
@@ -96,6 +99,7 @@ const runDailyTimesheetCheck = async () => {
             FROM timesheets t
             JOIN users u ON t.user_id = u.id
             WHERE t.status = $1 AND t.period_start = $2
+            AND u.email != 'admin@leodoesit.com'
         `, ['PENDING', targetPeriodStart]); // <--- Notice we added targetPeriodStart here!
 
         const pendingContractors = result.rows;

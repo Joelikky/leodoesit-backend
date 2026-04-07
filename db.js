@@ -8,6 +8,10 @@ const pool = new Pool({
   },
 });
 
+pool.on('error', (err, client) => {
+  console.error('Idle database connection was closed by Supabase:', err.message);
+});
+
 module.exports = {
   query: (text, params) => pool.query(text, params),
 };

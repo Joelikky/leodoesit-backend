@@ -13,7 +13,8 @@ router.get('/', async (req, res) => {
         e.pay_rate, e.invoice_rate,
         e.c2c_name, e.c2c_email, e.c2c_phone,
         e.vendor_name, e.vendor_email, e.vendor_address, e.vendor_for, 
-        TO_CHAR(e.project_start_date, 'YYYY-MM-DD') as project_start_date, e.net_terms
+        TO_CHAR(e.project_start_date, 'YYYY-MM-DD') as project_start_date, e.net_terms,
+        e.i9_completed, e.w4_completed, e.everify_completed, e.bank_details_completed
       FROM public.users u
       LEFT JOIN public.employee_details e ON u.id = e.user_id
       ORDER BY u.first_name ASC
@@ -34,7 +35,8 @@ router.post('/', async (req, res) => {
     role, start_date, invoice_num, contract_type,
     pay_rate, invoice_rate,
     c2c_name, c2c_email, c2c_phone,
-    vendor_name, vendor_email, vendor_address, vendor_for, project_start_date, net_terms
+    vendor_name, vendor_email, vendor_address, vendor_for, project_start_date, net_terms,
+    i9_completed, w4_completed, everify_completed, bank_details_completed
   } = req.body;
 
   try {
@@ -56,13 +58,15 @@ router.post('/', async (req, res) => {
         role, start_date, invoice_num, contract_type,
         pay_rate, invoice_rate,
         c2c_name, c2c_email, c2c_phone,
-        vendor_name, vendor_email, vendor_address, vendor_for, project_start_date, net_terms
+        vendor_name, vendor_email, vendor_address, vendor_for, project_start_date, net_terms,
+        i9_completed, w4_completed, everify_completed, bank_details_completed
       ) VALUES (
         $1, $2, $3, $4, $5, 
         $6, $7, $8, $9, 
         $10, $11, 
         $12, $13, $14, 
-        $15, $16, $17, $18, $19, $20
+        $15, $16, $17, $18, $19, $20,
+        $21, $22, $23, $24
       )
     `;
     
@@ -74,7 +78,8 @@ router.post('/', async (req, res) => {
       role, safeDate(start_date), invoice_num, contract_type || 'W2',
       parseFloat(pay_rate || 0), parseFloat(invoice_rate || 0),
       c2c_name, c2c_email, c2c_phone,
-      vendor_name, vendor_email, vendor_address, vendor_for, safeDate(project_start_date), net_terms
+      vendor_name, vendor_email, vendor_address, vendor_for, safeDate(project_start_date), net_terms,
+      i9_completed || false, w4_completed || false, everify_completed || false, bank_details_completed || false
     ];
 
     await db.query(detailsQuery, detailsValues);
@@ -98,7 +103,8 @@ router.put('/:id', async (req, res) => {
     role, start_date, invoice_num, contract_type,
     pay_rate, invoice_rate,
     c2c_name, c2c_email, c2c_phone,
-    vendor_name, vendor_email, vendor_address, vendor_for, project_start_date, net_terms
+    vendor_name, vendor_email, vendor_address, vendor_for, project_start_date, net_terms,
+    i9_completed, w4_completed, everify_completed, bank_details_completed
   } = req.body;
 
   try {
@@ -123,8 +129,9 @@ router.put('/:id', async (req, res) => {
           pay_rate = $9, invoice_rate = $10,
           c2c_name = $11, c2c_email = $12, c2c_phone = $13,
           vendor_name = $14, vendor_email = $15, vendor_address = $16, vendor_for = $17, 
-          project_start_date = $18, net_terms = $19
-      WHERE user_id = $20;
+          project_start_date = $18, net_terms = $19,
+          i9_completed = $20, w4_completed = $21, everify_completed = $22, bank_details_completed = $23
+      WHERE user_id = $24;
     `;
     
     const detailsValues = [
@@ -133,6 +140,7 @@ router.put('/:id', async (req, res) => {
       parseFloat(pay_rate || 0), parseFloat(invoice_rate || 0),
       c2c_name, c2c_email, c2c_phone,
       vendor_name, vendor_email, vendor_address, vendor_for, safeDate(project_start_date), net_terms,
+      i9_completed || false, w4_completed || false, everify_completed || false, bank_details_completed || false,
       id
     ];
 
@@ -148,7 +156,8 @@ router.put('/:id', async (req, res) => {
              e.pay_rate, e.invoice_rate,
              e.c2c_name, e.c2c_email, e.c2c_phone,
              e.vendor_name, e.vendor_email, e.vendor_address, e.vendor_for, 
-             TO_CHAR(e.project_start_date, 'YYYY-MM-DD') as project_start_date, e.net_terms
+             TO_CHAR(e.project_start_date, 'YYYY-MM-DD') as project_start_date, e.net_terms,
+             e.i9_completed, e.w4_completed, e.everify_completed, e.bank_details_completed
       FROM public.users u
       LEFT JOIN public.employee_details e ON u.id = e.user_id
       WHERE u.id = $1
