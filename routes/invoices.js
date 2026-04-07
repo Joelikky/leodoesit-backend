@@ -6,8 +6,9 @@ const path = require('path');
 const { generateInvoicePDF } = require('../utils/pdfGenerator');
 const { sendInvoiceEmail } = require('../utils/mailer');
 
-// 1. GET ROUTE: Fetch all invoices
+// 1. GET ROUTE: Fetch all invoices FOR THE LOGGED-IN PORTAL ONLY
 router.get('/', async (req, res) => {
+  const tenantId = req.headers['x-tenant-id']; 
   try {
     const query = `
       SELECT 
@@ -19,14 +20,16 @@ router.get('/', async (req, res) => {
         c.company_name AS client_name,
         u.first_name, 
         u.last_name,
+        u.tenant_id,
         COALESCE(i.amount_invoiced, (i.hours_billed * i.hourly_rate_applied)) AS amount_invoiced
       FROM invoices i
       LEFT JOIN clients c ON i.client_id = c.id
       LEFT JOIN timesheets t ON i.timesheet_id = t.id
       LEFT JOIN users u ON t.user_id = u.id
+      WHERE u.tenant_id = $1 -- 🔥 THE WALL: Only return invoices for this portal
       ORDER BY i.due_date DESC; 
     `;
-    const result = await db.query(query);
+    const result = await db.query(query, [tenantId]);
     res.json({ success: true, count: result.rowCount, data: result.rows });
   } catch (err) {
     console.error("Backend Crash Error:", err.message);
@@ -36,10 +39,9 @@ router.get('/', async (req, res) => {
 
 // 2. POST ROUTE: Generate a new invoice & PDF
 router.post('/', async (req, res) => {
-  const { client_id, timesheet_id } = req.body;
+  const { client_id, timesheet_id, tenant_id } = req.body;
 
   try {
-    // 🔥 THE FIX IS HERE: We explicitly ask the database for u.billing_rate!
     const mathQuery = `
       SELECT t.total_hours, t.period_start, t.period_end, 
              u.id AS user_id, u.first_name, u.last_name, 
@@ -59,15 +61,13 @@ router.post('/', async (req, res) => {
 
     const data = mathResult.rows[0];
     
-    // 🔥 THE SECOND FIX: Check for invoice_rate instead!
     if (!data.invoice_rate) {
         return res.status(400).json({ success: false, error: "Contractor is missing an invoice_rate in the database." });
     }
 
     const hours = parseFloat(data.total_hours);
-    const rate = parseFloat(data.invoice_rate); // Changed to use invoice_rate
+    const rate = parseFloat(data.invoice_rate); 
     const invoiceNumber = `INV-${Math.floor(Date.now() / 1000)}`;
-    // Generate the PDF
     const pdfFileName = `Invoice_TS_${timesheet_id}.pdf`;
     const pdfPath = path.join(__dirname, '..', 'invoices', pdfFileName); 
 
@@ -79,14 +79,13 @@ router.post('/', async (req, res) => {
         billingRate: rate
     }, pdfPath);
 
-    // Save to Database
-// Save to Database (Letting Supabase calculate the total automatically!)
-const insertQuery = `
-INSERT INTO invoices (client_id, timesheet_id, invoice_number, hours_billed, hourly_rate_applied, status, due_date)
-VALUES ($1, $2, $3, $4, $5, 'UNPAID', CURRENT_DATE + INTERVAL '30 days')
-RETURNING *;
-`;
-const insertResult = await db.query(insertQuery, [client_id, timesheet_id, invoiceNumber, hours, rate]);
+    // Save to Database (We add the tenant_id directly to the invoice row just in case)
+    const insertQuery = `
+    INSERT INTO invoices (client_id, timesheet_id, invoice_number, hours_billed, hourly_rate_applied, status, due_date)
+    VALUES ($1, $2, $3, $4, $5, 'UNPAID', CURRENT_DATE + INTERVAL '30 days')
+    RETURNING *;
+    `;
+    const insertResult = await db.query(insertQuery, [client_id, timesheet_id, invoiceNumber, hours, rate]);
     
     const updateTimesheetQuery = `
       UPDATE timesheets
@@ -138,7 +137,6 @@ router.post('/:id/send', async (req, res) => {
   const invoiceId = req.params.id;
 
   try {
-      // THE FIX: We added "c.billing_email" and joined the clients table!
       const query = `
           SELECT i.timesheet_id, u.first_name, u.last_name, t.period_start, c.billing_email
           FROM invoices i
@@ -152,8 +150,6 @@ router.post('/:id/send', async (req, res) => {
       if (result.rowCount === 0) return res.status(404).json({ success: false, error: "Invoice not found." });
 
       const data = result.rows[0];
-      
-      // THE FIX: Now we use the client's actual email!
       const clientEmail = data.billing_email; 
 
       if (!clientEmail) {
@@ -167,7 +163,6 @@ router.post('/:id/send', async (req, res) => {
       const emailSent = await sendInvoiceEmail(clientEmail, contractorFullName, monthName, pdfPath);
 
       if (emailSent) {
-        // <-- ADD THESE TWO LINES -->
         const stampQuery = `UPDATE invoices SET emailed_at = CURRENT_TIMESTAMP WHERE id = $1`;
         await db.query(stampQuery, [invoiceId]);
 

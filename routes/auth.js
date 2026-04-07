@@ -1,51 +1,60 @@
-
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// POST: Verify user credentials
+// POST: Verify user credentials for a specific tenant
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
+  // 1. We now capture the 'portal' choice sent from the React dropdown
+  const { email, password, portal } = req.body;
 
   try {
-    // 1. Find the user AND their employee details using a JOIN
-    // FIX: Aliased e.role to employee_role to prevent overwriting the system u.role
-
-    const loginQuery = `
-    SELECT u.*, 
-           COALESCE(e.pay_rate, 0) AS pay_rate, 
-           COALESCE(e.invoice_rate, 0) AS invoice_rate, 
-           e.role AS employee_role, 
-           e.employment_status
-    FROM users u
-    LEFT JOIN employee_details e ON u.id = e.user_id
-    WHERE u.email = $1 AND u.is_active = true;
-  `;
+    // 2. Look up the specific company they are trying to log into
+    const tenantResult = await db.query('SELECT id, name, domain_prefix FROM tenants WHERE domain_prefix = $1', [portal]);
     
-    const result = await db.query(loginQuery, [email]);
+    if (tenantResult.rows.length === 0) {
+        return res.status(400).json({ success: false, error: "Invalid portal selected." });
+    }
+    const tenant = tenantResult.rows[0];
+
+    // 3. Find the user inside THIS SPECIFIC company only (using tenant_id)
+    const loginQuery = `
+      SELECT u.*, 
+             COALESCE(e.pay_rate, 0) AS pay_rate, 
+             COALESCE(e.invoice_rate, 0) AS invoice_rate, 
+             e.role AS employee_role, 
+             e.employment_status
+      FROM users u
+      LEFT JOIN employee_details e ON u.id = e.user_id
+      WHERE u.email = $1 AND u.tenant_id = $2 AND u.is_active = true;
+    `;
+    
+    const result = await db.query(loginQuery, [email, tenant.id]);
     
     if (result.rows.length === 0) {
-      return res.status(401).json({ success: false, error: "Invalid email or inactive account." });
+      return res.status(401).json({ success: false, error: `Account not found in the ${tenant.name} portal.` });
     }
 
     const user = result.rows[0];
 
-    // 2. Check the password
+    // 4. Check the password
     if (user.password !== password) {
       return res.status(401).json({ success: false, error: "Incorrect password." });
     }
 
-    // 3. Security: Delete the password from the memory object before sending it to React!
+    // 5. Security: Delete the password from the memory object!
     delete user.password;
 
-    // 4. Give them the VIP pass with their pay rate included!
+    // 6. Attach the company details to the user so the frontend knows who is active
+    user.tenant_id = tenant.id;
+    user.tenant_prefix = tenant.domain_prefix;
+    user.tenant_name = tenant.name;
+
     res.json({ success: true, message: "Login successful!", data: user });
     
-  
-} catch (err) {
-  console.error("Backend Crash Error:", err); // Use a comma! // OR something similar
-  res.status(500).json({ message: "Server error during login." }); 
-}
+  } catch (err) {
+    console.error("Backend Crash Error:", err); 
+    res.status(500).json({ success: false, message: "Server error during login." }); 
+  }
 });
 
 module.exports = router;
