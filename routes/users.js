@@ -39,7 +39,7 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const {
     first_name, last_name, email,
-    tenant_id, // Capture tenant_id from the frontend form
+    tenant_id, 
     phone_number, address, dob, visa_status,
     role, start_date, invoice_num, contract_type,
     pay_rate, invoice_rate,
@@ -70,16 +70,9 @@ router.post('/', async (req, res) => {
         vendor_name, vendor_email, vendor_address, vendor_for, project_start_date, net_terms,
         i9_completed, w4_completed, everify_completed, bank_details_completed
       ) VALUES (
-<<<<<<< HEAD
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
-=======
-        $1, $2, $3, $4, $5, 
-        $6, $7, $8, $9, 
-        $10, $11, 
-        $12, $13, $14, 
-        $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24
->>>>>>> 39e0febc973c2f52a7150cc786f4c0456c1c3847
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 
+        $21, $22, $23, $24, $25
       )
     `;
     
@@ -104,4 +97,79 @@ router.post('/', async (req, res) => {
     res.status(500).json({ success: false, error: "Failed to create employee." });
   }
 });
+
+// 3. PUT: Update an existing employee (🔥 FIXED)
+router.put('/:id', async (req, res) => {
+  const userId = req.params.id;
+  const {
+    first_name, last_name, email, is_active,
+    phone_number, address, dob, visa_status,
+    role, start_date, invoice_num, contract_type,
+    pay_rate, invoice_rate,
+    c2c_name, c2c_email, c2c_phone,
+    vendor_name, vendor_email, vendor_address, 
+    vendor_for, project_start_date, net_terms, 
+    i9_completed, w4_completed, everify_completed, bank_details_completed
+  } = req.body;
+
+  try {
+    await db.query('BEGIN');
+
+    // 1. Update the core user table
+    const userQuery = `
+      UPDATE public.users 
+      SET first_name = $1, last_name = $2, email = $3, is_active = $4
+      WHERE id = $5;
+    `;
+    await db.query(userQuery, [first_name, last_name, email, is_active, userId]);
+
+    // 2. Update the employee details table
+    const detailsQuery = `
+      UPDATE public.employee_details 
+      SET 
+        phone_number = $1, address = $2, dob = $3, visa_status = $4,
+        role = $5, start_date = $6, invoice_num = $7, contract_type = $8,
+        pay_rate = $9, invoice_rate = $10,
+        c2c_name = $11, c2c_email = $12, c2c_phone = $13,
+        vendor_name = $14, vendor_email = $15, vendor_address = $16,
+        vendor_for = $17, project_start_date = $18, net_terms = $19,
+        i9_completed = $20, w4_completed = $21, everify_completed = $22, bank_details_completed = $23
+      WHERE user_id = $24
+    `;
+
+    // Helper to safely format empty dates
+    const safeDate = (dateStr) => (dateStr && dateStr.trim() !== '') ? dateStr : null;
+
+    const detailsValues = [
+      phone_number, address, safeDate(dob), visa_status,
+      role, safeDate(start_date), invoice_num, contract_type || 'W2',
+      parseFloat(pay_rate || 0), parseFloat(invoice_rate || 0),
+      c2c_name, c2c_email, c2c_phone,
+      vendor_name, vendor_email, vendor_address, 
+      vendor_for, safeDate(project_start_date), net_terms, 
+      i9_completed || false, w4_completed || false, everify_completed || false, bank_details_completed || false,
+      userId
+    ];
+
+    await db.query(detailsQuery, detailsValues);
+    await db.query('COMMIT');
+    
+    // 3. Fetch the fresh data to send back to React so the UI updates instantly
+    const updatedUserQuery = `
+      SELECT u.id, u.first_name, u.last_name, u.email, u.is_active, u.tenant_id,
+             e.* FROM public.users u
+      LEFT JOIN public.employee_details e ON u.id = e.user_id
+      WHERE u.id = $1
+    `;
+    const updatedResult = await db.query(updatedUserQuery, [userId]);
+
+    res.json({ success: true, data: updatedResult.rows[0] });
+
+  } catch (err) {
+    await db.query('ROLLBACK');
+    console.error("Update Error:", err.message);
+    res.status(500).json({ success: false, error: "Failed to update employee." });
+  }
+});
+
 module.exports = router;

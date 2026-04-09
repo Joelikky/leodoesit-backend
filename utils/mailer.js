@@ -1,105 +1,123 @@
 const nodemailer = require('nodemailer');
-require('dotenv').config();
 
-// 1. Outlook Configuration (For Leodoesit)
-const leodoesitTransporter = nodemailer.createTransport({
-    host: 'smtp.office365.com',
-    port: 587,
-    secure: false, 
-    auth: {
-      user: process.env.EMAIL_USER, 
-      pass: process.env.EMAIL_PASS, 
-    },
-});
-
-// 2. Zoho Configuration (For Gandiva)
-const gandivaTransporter = nodemailer.createTransport({
-    host: 'smtp.zoho.com',
-    port: 465,
-    secure: true, 
-    auth: {
-      user: process.env.GANDIVA_EMAIL, 
-      pass: process.env.GANDIVA_PASS, 
-    },
-});
-
-// 3. The "Smart Switcher" - It picks the right email account based on the company name
-const getMailer = (tenantPrefix) => {
-    if (tenantPrefix === 'gandiva') {
-        return { transporter: gandivaTransporter, fromEmail: process.env.GANDIVA_EMAIL, companyName: 'Gandiva' };
-    }
-    return { transporter: leodoesitTransporter, fromEmail: process.env.EMAIL_USER, companyName: 'Leodoes It' };
-};
-
-// 4. The Email Functions
-const sendTimesheetReminder = async (tenantPrefix, contractorEmail, contractorName, monthName) => {
-    const { transporter, fromEmail, companyName } = getMailer(tenantPrefix);
-    
+const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, monthYear, pdfPath, invoiceNumber) => {
     try {
-        await transporter.sendMail({
-            from: `"${companyName} Accounts" <${fromEmail}>`, 
-            replyTo: fromEmail, 
-            to: contractorEmail,
-            subject: `Action Required: Submit your timesheet for ${monthName}`,
-            html: `<div style="font-family: Arial, sans-serif; color: #333;">
-                     <h2>Hello ${contractorName},</h2>
-                     <p>This is a friendly reminder from <strong>${companyName}</strong> to submit your timesheet for <strong>${monthName}</strong>.</p>
-                     <p>Please log into your portal to complete your submission.</p>
-                     <br/>
-                     <p>Thank you,</p>
-                     <p><strong>Leo</strong><br/>${companyName} Management</p>
-                   </div>`
+        const isGandiva = tenantPrefix === 'gandiva';
+
+        // 1. DYNAMIC CREDENTIALS: Pick the right email and password based on the portal
+        const smtpUser = isGandiva ? process.env.GANDIVA_EMAIL : process.env.EMAIL_USER;
+        const smtpPass = isGandiva ? process.env.GANDIVA_PASS : process.env.EMAIL_PASS;
+
+        // 2. Setup your email server
+        const transporter = nodemailer.createTransport({
+            host: 'smtp.zoho.com', // Note: Change to smtp.gmail.com or smtp.office365.com if you aren't using Zoho!
+            port: 465,
+            secure: true,
+            auth: {
+                user: smtpUser,
+                pass: smtpPass
+            }
         });
-        console.log(`Reminder sent to ${contractorEmail} via ${companyName}`);
-        return true;
-    } catch (error) {
-        console.error(`Failed to send reminder:`, error);
-        return false;
-    }
-};
 
-const sendRejectionEmail = async (tenantPrefix, contractorEmail, contractorName, billingPeriod, reason) => {
-    const { transporter, fromEmail, companyName } = getMailer(tenantPrefix);
-    
-    try {
-        await transporter.sendMail({
-            from: `"${companyName} Accounts" <${fromEmail}>`, 
-            to: contractorEmail,
-            subject: `Action Required: Timesheet Rejected for ${billingPeriod}`,
-            html: `<div style="font-family: Arial, sans-serif; color: #333;">
-                     <h2>Hello ${contractorName},</h2>
-                     <p>Your timesheet for ${billingPeriod} was reviewed and requires corrections.</p>
-                     <p><strong>Reason for rejection:</strong> <i>"${reason}"</i></p>
-                     <p>Please log in, make the necessary adjustments, and resubmit.</p>
-                   </div>`
-        });
-        return true;
-    } catch (error) {
-        return false;
-    }
-};
+        let htmlContent = '';
 
-const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, monthName, pdfPath) => {
-    const { transporter, fromEmail, companyName } = getMailer(tenantPrefix);
-    
-    try {
-        await transporter.sendMail({
-            from: `"${companyName} Accounts" <${fromEmail}>`, 
-            replyTo: fromEmail, 
+        // ==========================================
+        // 🎨 LEO DOES IT EMAIL TEMPLATE
+        // ==========================================
+        if (!isGandiva) {
+            htmlContent = `
+            <div style="font-family: Arial, sans-serif; color: #222; font-size: 14px; line-height: 1.6; max-width: 600px;">
+                <p>Hi Team,</p>
+                
+                <p>I hope this message finds you well.</p>
+                
+                <p>Please find attached are the invoice - <strong>#${invoiceNumber}</strong> and approved timesheets for <strong>${contractorName}</strong> for the month of <strong>${monthYear}</strong>.</p>
+                
+                <p>We kindly request you to confirm receipt and acceptance of the attached invoice at your earliest convenience. Your prompt acknowledgment will help us ensure our records remain accurate and allow the invoicing process to proceed smoothly.</p>
+                
+                <p>Should you have any questions or require further clarification, please feel free to reach out.</p>
+                
+                <p>Thank you for your cooperation</p>
+                
+                <br/>
+                
+                <div style="font-family: Arial, sans-serif;">
+                    <p style="color: #000080; font-weight: bold; font-size: 14px; margin-bottom: 8px;">
+                        Bhanu Prakash | Accounts Team
+                    </p>
+                    
+                    <h2 style="margin: 0 0 8px 0; font-family: 'Arial Black', sans-serif; font-size: 22px;">
+                        <span style="color: #FF5722;">LEO</span><span style="color: #1976D2;">DOESIT</span>
+                    </h2>
+                    
+                    <p style="color: #000080; font-size: 13px; margin-top: 0; line-height: 1.5;">
+                        1335 Regents Park Dr, Ste# 270, Houston, TX 77058<br/>
+                        Phone: +1-346-585-7793 || Direct: 551-256-0027|<br/>
+                        Email: <a href="mailto:accounts@leodoesit.com" style="color: #000080; text-decoration: none;">accounts@leodoesit.com</a>
+                    </p>
+                </div>
+            </div>
+            `;
+        } 
+        // ==========================================
+        // 🎨 GANDIVA INSIGHTS EMAIL TEMPLATE
+        // ==========================================
+        else {
+            htmlContent = `
+            <div style="font-family: Arial, sans-serif; color: #222; font-size: 14px; line-height: 1.6; max-width: 600px;">
+                <p>Hi Team,</p>
+                
+                <p>I hope this message finds you well.</p>
+                
+                <p>Please find attached are the invoice - <strong>#${invoiceNumber}</strong> and approved timesheets for <strong>${contractorName}</strong> for the month of <strong>${monthYear}</strong>.</p>
+                
+                <p>We kindly request you to confirm receipt and acceptance of the attached invoice at your earliest convenience. Your prompt acknowledgment will help us ensure our records remain accurate and allow the invoicing process to proceed smoothly.</p>
+                
+                <p>Should you have any questions or require further clarification, please feel free to reach out.</p>
+                
+                <p>Thank you for your cooperation</p>
+                
+                <br/>
+                
+                <div style="font-family: Arial, sans-serif;">
+                    <p style="color: #283747; font-weight: bold; font-size: 14px; margin-bottom: 8px;">
+                        Accounts Team
+                    </p>
+                    
+                    <h2 style="margin: 0 0 8px 0; font-family: 'Arial Black', sans-serif; font-size: 22px;">
+                        <span style="color: #283747;">GANDIVA</span> <span style="color: #E67E22;">INSIGHTS</span>
+                    </h2>
+                    
+                    <p style="color: #283747; font-size: 13px; margin-top: 0; line-height: 1.5;">
+                        123 Gandiva Way, Suite 100, Tech City, TX 75001<br/>
+                        Phone: 555-256-0000<br/>
+                        Email: <a href="mailto:accounts@gandivainsights.com" style="color: #283747; text-decoration: none;">accounts@gandivainsights.com</a>
+                    </p>
+                </div>
+            </div>
+            `;
+        }
+
+        // 3. Configure and Send the Email
+        const mailOptions = {
+            from: smtpUser, // Dynamically set to either Leodoesit or Gandiva email!
             to: clientEmail,
-            subject: `New Invoice: ${contractorName} - ${monthName} Services`,
-            html: `<div style="font-family: Arial, sans-serif; color: #333;">
-                     <p>Hello,</p>
-                     <p>Please find attached the official invoice for contractor services provided by <strong>${contractorName}</strong> for <strong>${monthName}</strong>.</p>
-                     <p>Thank you for your continued business!</p>
-                     <p><strong>Leo</strong><br/>${companyName} Management</p>
-                   </div>`,
-            attachments: [{ filename: `Invoice_${contractorName.replace(/\s+/g, '_')}_${monthName}.pdf`, path: pdfPath }]
-        });
+            subject: `Invoice and Timesheets - ${contractorName} - ${monthYear}`,
+            html: htmlContent,
+            attachments: [
+                {
+                    filename: `Invoice_${contractorName.replace(/\s+/g, '_')}_${monthYear}.pdf`,
+                    path: pdfPath
+                }
+            ]
+        };
+
+        await transporter.sendMail(mailOptions);
         return true;
     } catch (error) {
+        console.error("Mailer Error:", error);
         return false;
     }
 };
 
-module.exports = { sendTimesheetReminder, sendInvoiceEmail, sendRejectionEmail };
+module.exports = { sendInvoiceEmail };
