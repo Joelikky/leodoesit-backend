@@ -4,6 +4,7 @@ const { sendTimesheetReminder } = require('./utils/mailer');
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Helper: Checks if today is past the first Monday of the month
 const isPastFirstMonday = () => {
     const today = new Date();
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -18,6 +19,7 @@ const isPastFirstMonday = () => {
     return today >= firstMonday;
 };
 
+// Runs on the 1st of every month
 const generateMonthlyTimesheets = async () => {
     console.log('Starting monthly timesheet generation...');
     
@@ -31,18 +33,20 @@ const generateMonthlyTimesheets = async () => {
         const periodStart = `${year}-${safeMonth}-01`;
         const periodEnd = `${year}-${safeMonth}-${lastDay}`;
 
-        // UPDATE: We now fetch the user's ID AND their tenant_id
-        const usersResult = await db.query(`SELECT id, tenant_id FROM users`);
+        // Fetch all ACTIVE users (Ignore deleted/archived employees)
+        const usersResult = await db.query(`
+            SELECT id, tenant_id FROM users 
+            WHERE COALESCE(is_deleted, false) = false
+        `);
         const users = usersResult.rows;
 
         if (users.length === 0) {
-            console.log('No users found to generate timesheets for.');
+            console.log('No active users found to generate timesheets for.');
             return;
         }
 
         let count = 0;
         for (const user of users) {
-            // UPDATE: We insert the tenant_id into the new timesheet so it stays in the right portal
             await db.query(`
                 INSERT INTO timesheets (user_id, tenant_id, status, period_start, period_end)
                 VALUES ($1, $2, 'PENDING', $3, $4)
@@ -57,15 +61,18 @@ const generateMonthlyTimesheets = async () => {
     }
 };
 
+// Runs every day at 9:00 AM
 const runDailyTimesheetCheck = async () => {
     console.log('Running daily timesheet check...');
     
+    // Stop immediately if it's not the First Monday yet
     if (!isPastFirstMonday()) {
         console.log('Too early in the month. Waiting for the First Monday.');
         return; 
     }
 
     const today = new Date();
+    // Look at LAST month's timesheets
     const lastMonthDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
     const previousMonthName = lastMonthDate.toLocaleString('default', { month: 'long' });
     
@@ -74,13 +81,12 @@ const runDailyTimesheetCheck = async () => {
     const targetPeriodStart = `${targetYear}-${targetMonth}-01`;
 
     try {
-        // UPDATE: We use a JOIN to grab the domain_prefix from the tenants table
         const result = await db.query(`
             SELECT t.user_id, t.status, u.first_name, u.email, ten.domain_prefix
             FROM timesheets t
             JOIN users u ON t.user_id = u.id
             JOIN tenants ten ON u.tenant_id = ten.id
-            WHERE t.status = $1 AND t.period_start = $2
+            WHERE t.status = $1 AND t.period_start = $2 AND COALESCE(u.is_deleted, false) = false
         `, ['PENDING', targetPeriodStart]); 
 
         const pendingContractors = result.rows;
@@ -93,9 +99,8 @@ const runDailyTimesheetCheck = async () => {
         console.log(`Found ${pendingContractors.length} pending timesheets. Initiating emails...`);
 
         for (const record of pendingContractors) {
-            // UPDATE: We pass the domain_prefix (leodoesit or gandiva) to the mailer!
             await sendTimesheetReminder(record.domain_prefix, record.email, record.first_name, previousMonthName);
-            await delay(5000); 
+            await delay(5000); // 5 second pause to protect email reputation
         }
 
         console.log('Daily email sequence complete.');
@@ -105,12 +110,16 @@ const runDailyTimesheetCheck = async () => {
     }
 };
 
+// --- AUTOMATED CRON TIMERS ---
+
+// Fire every day at 9:00 AM Central Time
 cron.schedule('0 9 * * *', () => {
     runDailyTimesheetCheck();
 }, { timezone: "America/Chicago" });
 
+// Fire on the 1st of every month at midnight Central Time
 cron.schedule('0 0 1 * *', () => {
     generateMonthlyTimesheets();
 }, { timezone: "America/Chicago" });
 
-console.log('Timesheet Scheduler initialized.');
+console.log('Production Timesheet Scheduler initialized.');
