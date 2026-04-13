@@ -1,59 +1,81 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
+const db = require('../db'); 
 
-// GET: Only fetch clients for the active portal
+// --- GET ALL CLIENTS ---
 router.get('/', async (req, res) => {
-  const tenantId = req.headers['x-tenant-id']; 
-  try {
-    const result = await db.query(
-      'SELECT * FROM clients WHERE tenant_id = $1 ORDER BY company_name ASC', 
-      [tenantId]
-    );
-    res.json({ success: true, data: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: "Failed to fetch clients" });
-  }
-});
-
-// POST: Add a new client tagged to the current company
-router.post('/', async (req, res) => {
-  const { company_name, billing_email, net_terms, vendor_address, tenant_id, is_active } = req.body;
-  try {
-    const query = `
-      INSERT INTO clients (company_name, billing_email, net_terms, vendor_address, tenant_id, is_active)
-      VALUES ($1, $2, $3, $4, $5, COALESCE($6, true))
-      RETURNING *;
-    `;
-    const result = await db.query(query, [company_name, billing_email, net_terms, vendor_address, tenant_id, is_active]);
-    res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ success: false, error: "Failed to create client." });
-  }
-});
-
-// PUT: Edit an existing client
-router.put('/:id', async (req, res) => {
-  const { id } = req.params;
-  const { company_name, billing_email, net_terms, vendor_address, is_active } = req.body;
+  const tenant_id = req.headers['x-tenant-id'];
   
   try {
-    const query = `
-      UPDATE clients
-      SET company_name = $1, billing_email = $2, net_terms = $3, vendor_address = $4, is_active = $5
-      WHERE id = $6
-      RETURNING *;
-    `;
-    const result = await db.query(query, [company_name, billing_email, net_terms, vendor_address, is_active, id]);
+    let query = 'SELECT * FROM public.clients';
+    let params = [];
     
-    if (result.rowCount === 0) {
-      return res.status(404).json({ success: false, error: "Client not found." });
+    if (tenant_id) {
+      query += ' WHERE tenant_id = $1';
+      params.push(tenant_id);
     }
     
+    query += ' ORDER BY id DESC'; 
+    
+    const result = await db.query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    console.error("GET Clients Error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- POST: CREATE NEW CLIENT ---
+router.post('/', async (req, res) => {
+  const { company_name, name, billing_email, email, phone_number, net_terms, address, vendor_address, tenant_id } = req.body;
+  
+  try {
+    // Safely handle aliases in case your DB expects different names
+    const finalName = company_name || name || '';
+    const finalEmail = billing_email || email || '';
+    const finalAddress = address || vendor_address || '';
+
+    const query = `
+      INSERT INTO public.clients (company_name, billing_email, phone_number, net_terms, address, tenant_id, is_active)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *;
+    `;
+    const values = [finalName, finalEmail, phone_number, net_terms, finalAddress, tenant_id, true]; 
+    
+    const result = await db.query(query, values);
     res.json({ success: true, data: result.rows[0] });
   } catch (err) {
-    console.error("Backend Error updating client:", err.message);
-    res.status(500).json({ success: false, error: "Failed to update client." });
+    console.error("POST Client Error:", err.message);
+    res.status(500).json({ success: false, error: err.message }); // 🔥 Shows the actual DB error
+  }
+});
+
+// --- PUT: UPDATE EXISTING CLIENT ---
+router.put('/:id', async (req, res) => {
+  const { id } = req.params;
+  const { company_name, name, billing_email, email, phone_number, net_terms, address, vendor_address, is_active } = req.body;
+
+  try {
+    // Safely handle aliases
+    const finalName = company_name || name || '';
+    const finalEmail = billing_email || email || '';
+    const finalAddress = address || vendor_address || '';
+    const activeState = is_active !== false; 
+
+    const query = `
+      UPDATE public.clients 
+      SET company_name = $1, billing_email = $2, phone_number = $3, net_terms = $4, address = $5, is_active = $6
+      WHERE id = $7
+      RETURNING *;
+    `;
+    
+    const values = [finalName, finalEmail, phone_number, net_terms, finalAddress, activeState, id];
+    
+    const result = await db.query(query, values);
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    console.error("PUT Client Error:", err.message);
+    res.status(500).json({ success: false, error: err.message }); // 🔥 Shows the actual DB error
   }
 });
 

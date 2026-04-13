@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
     const query = `
       SELECT 
         i.id, i.invoice_number, i.status, i.due_date, i.emailed_at,
-        COALESCE(i.amount_paid, 0) AS amount_paid, -- NEW FIELD
+        COALESCE(i.amount_paid, 0) AS amount_paid,
         c.company_name AS client_name,
         u.first_name, u.last_name, u.tenant_id,
         COALESCE(i.amount_invoiced, (i.hours_billed * i.hourly_rate_applied)) AS amount_invoiced
@@ -104,22 +104,35 @@ router.post('/', async (req, res) => {
   }
 });
 
-// 3. PUT ROUTE: Handles Full & Partial Payments!
+// 3. PUT ROUTE: 🔥 CRASH-PROOF PAYMENT HANDLING (Merged & Fixed)
 router.put('/:id/pay', async (req, res) => {
   const { id } = req.params;
-  const { payment_amount } = req.body; // How much the user typed in the frontend box!
+  const { payment_amount } = req.body; 
   
   try {
-    // Get the current invoice details
-    const invResult = await db.query(`SELECT COALESCE(amount_invoiced, (hours_billed * hourly_rate_applied)) AS total, COALESCE(amount_paid, 0) as paid FROM invoices WHERE id = $1`, [id]);
+    // Safely calculate the total invoiced amount even if it's dynamic
+    const invResult = await db.query(`
+      SELECT 
+        COALESCE(amount_invoiced, (hours_billed * hourly_rate_applied)) AS total_invoiced, 
+        COALESCE(amount_paid, 0) as current_paid 
+      FROM invoices WHERE id = $1
+    `, [id]);
+
     if (invResult.rowCount === 0) return res.status(404).json({ success: false, error: "Invoice not found" });
 
-    const totalInvoiced = parseFloat(invResult.rows[0].total);
-    const currentPaid = parseFloat(invResult.rows[0].paid);
+    const totalInvoiced = parseFloat(invResult.rows[0].total_invoiced || 0);
+    const currentPaid = parseFloat(invResult.rows[0].current_paid || 0);
     
-    // Calculate the new total paid amount
-    const newlyAddedPayment = parseFloat(payment_amount || totalInvoiced); // If they didn't type a partial amount, assume full payment
-    const newTotalPaid = currentPaid + newlyAddedPayment;
+    // Determine the amount added in this transaction
+    let addedPayment = 0;
+    if (payment_amount !== undefined && payment_amount !== null && payment_amount !== '') {
+        addedPayment = parseFloat(payment_amount);
+    } else {
+        // If left blank, pay the remaining balance
+        addedPayment = totalInvoiced - currentPaid;
+    }
+
+    const newTotalPaid = currentPaid + addedPayment;
 
     // Smart Status Logic
     let newStatus = 'UNPAID';
@@ -131,28 +144,36 @@ router.put('/:id/pay', async (req, res) => {
 
     const updateQuery = `UPDATE invoices SET status = $1, amount_paid = $2 WHERE id = $3 RETURNING *;`;
     const result = await db.query(updateQuery, [newStatus, newTotalPaid, id]);
+    
     res.json({ success: true, message: `Payment updated! Status is now ${newStatus}`, data: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ success: false, error: "Failed to update payment." });
+    console.error("Payment Error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 4. DELETE ROUTE: Void an invoice
-router.delete('/:id', async (req, res) => {
+// 4. PUT ROUTE: 🔥 VOID INVOICE (And unlock timesheet!)
+router.put('/:id/void', async (req, res) => {
   const { id } = req.params;
   try {
+    // Unlock the timesheet so it can be re-invoiced if needed
     const invResult = await db.query('SELECT timesheet_id FROM invoices WHERE id = $1', [id]);
     if (invResult.rows.length > 0) {
       await db.query("UPDATE timesheets SET status = 'APPROVED' WHERE id = $1", [invResult.rows[0].timesheet_id]);
     }
-    await db.query('DELETE FROM invoices WHERE id = $1', [id]);
-    res.json({ success: true, message: 'Invoice voided successfully.' });
+    
+    // Mark as VOID instead of deleting
+    const updateQuery = `UPDATE invoices SET status = 'VOID' WHERE id = $1 RETURNING *;`;
+    const updated = await db.query(updateQuery, [id]);
+    
+    res.json({ success: true, message: 'Invoice voided successfully.', data: updated.rows[0] });
   } catch (err) {
-    res.status(500).json({ success: false, error: "Failed to void invoice." });
+    console.error("Void Error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 5. POST ROUTE: Trigger the Mailer Utility (Original Invoice PDF)
+// 5. POST ROUTE: Trigger the Mailer Utility
 router.post('/:id/send', async (req, res) => {
   const invoiceId = req.params.id;
   try {
