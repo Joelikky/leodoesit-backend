@@ -55,7 +55,7 @@ const generateInvoicePDF = async (data, outputPath) => {
             <div class="header-flex">
                 <div>
                     <div class="company-name">GANDIVA INSIGHTS</div>
-                    <div>123 Gandiva Way,<br/>Suite 100<br/>Tech City, TX 75001<br/>Tax Id#: 99-9999999</div>
+                    <div>accounts@gandivainsights.com<br/>Gandivainsights.com<br/>Houston, TX | 77058</div>
                 </div>
                 <div class="invoice-title-box">
                     <div class="invoice-title">INVOICE</div>

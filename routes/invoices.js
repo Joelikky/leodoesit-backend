@@ -104,13 +104,12 @@ router.post('/', async (req, res) => {
   }
 });
 
-// 3. PUT ROUTE: 🔥 CRASH-PROOF PAYMENT HANDLING (Merged & Fixed)
+// 3. PUT ROUTE: 🔥 CRASH-PROOF PAYMENT HANDLING
 router.put('/:id/pay', async (req, res) => {
   const { id } = req.params;
   const { payment_amount } = req.body; 
   
   try {
-    // Safely calculate the total invoiced amount even if it's dynamic
     const invResult = await db.query(`
       SELECT 
         COALESCE(amount_invoiced, (hours_billed * hourly_rate_applied)) AS total_invoiced, 
@@ -123,18 +122,15 @@ router.put('/:id/pay', async (req, res) => {
     const totalInvoiced = parseFloat(invResult.rows[0].total_invoiced || 0);
     const currentPaid = parseFloat(invResult.rows[0].current_paid || 0);
     
-    // Determine the amount added in this transaction
     let addedPayment = 0;
     if (payment_amount !== undefined && payment_amount !== null && payment_amount !== '') {
         addedPayment = parseFloat(payment_amount);
     } else {
-        // If left blank, pay the remaining balance
         addedPayment = totalInvoiced - currentPaid;
     }
 
     const newTotalPaid = currentPaid + addedPayment;
 
-    // Smart Status Logic
     let newStatus = 'UNPAID';
     if (newTotalPaid >= totalInvoiced) {
         newStatus = 'PAID';
@@ -152,17 +148,15 @@ router.put('/:id/pay', async (req, res) => {
   }
 });
 
-// 4. PUT ROUTE: 🔥 VOID INVOICE (And unlock timesheet!)
+// 4. PUT ROUTE: 🔥 VOID INVOICE
 router.put('/:id/void', async (req, res) => {
   const { id } = req.params;
   try {
-    // Unlock the timesheet so it can be re-invoiced if needed
     const invResult = await db.query('SELECT timesheet_id FROM invoices WHERE id = $1', [id]);
     if (invResult.rows.length > 0) {
       await db.query("UPDATE timesheets SET status = 'APPROVED' WHERE id = $1", [invResult.rows[0].timesheet_id]);
     }
     
-    // Mark as VOID instead of deleting
     const updateQuery = `UPDATE invoices SET status = 'VOID' WHERE id = $1 RETURNING *;`;
     const updated = await db.query(updateQuery, [id]);
     
@@ -190,7 +184,11 @@ router.post('/:id/send', async (req, res) => {
       if (result.rowCount === 0) return res.status(404).json({ success: false, error: "Invoice not found." });
 
       const data = result.rows[0];
-      if (!data.billing_email) return res.status(400).json({ success: false, error: "No billing email found." });
+      
+      // 🔥 FIX 1: Safety check for email
+      if (!data.billing_email) {
+          return res.status(400).json({ success: false, error: "The client attached to this invoice has no billing email address saved." });
+      }
 
       const pdfPath = path.join(__dirname, '..', 'invoices', `Invoice_TS_${data.timesheet_id}.pdf`);
       const monthYear = new Date(data.period_start).toLocaleString('en-US', { month: 'long', year: 'numeric' });
@@ -201,7 +199,8 @@ router.post('/:id/send', async (req, res) => {
         await db.query(`UPDATE invoices SET emailed_at = CURRENT_TIMESTAMP WHERE id = $1`, [invoiceId]);
         res.json({ success: true, message: `Email sent!` });
       } else {
-        res.status(500).json({ success: false, error: "Failed to send email." });
+        // 🔥 FIX 2: Clearer error message
+        res.status(500).json({ success: false, error: "Zoho rejected the email. Check your backend terminal (where nodemon is running) to see the exact error." });
       }
   } catch (error) {
       res.status(500).json({ success: false, error: "Server error." });
@@ -229,13 +228,19 @@ router.post('/:id/remind', async (req, res) => {
         const balanceDue = parseFloat(data.total) - parseFloat(data.amount_paid);
         
         if (balanceDue <= 0) return res.status(400).json({ success: false, error: "This invoice is already fully paid!" });
+
+        // 🔥 FIX 1: Make sure the email exists before trying to send!
+        if (!data.billing_email) {
+            return res.status(400).json({ success: false, error: "The client attached to this invoice has no billing email address saved." });
+        }
   
         const emailSent = await sendBalanceReminderEmail(data.domain_prefix, data.billing_email, `${data.first_name} ${data.last_name}`, data.invoice_number, balanceDue);
   
         if (emailSent) {
           res.json({ success: true, message: `Reminder sent to ${data.billing_email}!` });
         } else {
-          res.status(500).json({ success: false, error: "Failed to send reminder email." });
+          // 🔥 FIX 2: Check the console log to see why Zoho rejected it!
+          res.status(500).json({ success: false, error: "Zoho rejected the email. Check your backend terminal (where nodemon is running) to see the exact error." });
         }
     } catch (error) {
         res.status(500).json({ success: false, error: "Server error." });

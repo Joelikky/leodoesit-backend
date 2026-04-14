@@ -18,22 +18,25 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 // ------------------------------------
 
-// 1. GET ROUTE: Fetch ALL timesheets (For the Admin Queue)
+// 1. GET ROUTE: Fetch ALL timesheets (For the Admin Queue & Hub)
 router.get('/', async (req, res) => {
   const { status } = req.query; 
+  // 🔥 FIX 1: Grab the tenant ID so we don't leak data!
+  const tenantId = req.headers['x-tenant-id']; 
+
   try {
-    // UPDATED: Joined employee_details to grab the new pay_rate
     let query = `
       SELECT t.id, t.period_start, t.period_end, t.total_hours, t.status, t.screenshot_urls,
-             u.first_name, u.last_name, e.pay_rate, e.vendor_name
+             u.first_name, u.last_name, u.tenant_id, e.pay_rate, e.invoice_rate, e.vendor_name
       FROM timesheets t
       JOIN users u ON t.user_id = u.id
       LEFT JOIN employee_details e ON u.id = e.user_id
+      WHERE u.tenant_id = $1
     `;
-    let values = [];
+    let values = [tenantId];
 
     if (status) {
-      query += ` WHERE t.status = $1`;
+      query += ` AND t.status = $2`;
       values.push(status);
     }
     query += ` ORDER BY t.created_at DESC;`;
