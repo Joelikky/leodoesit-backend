@@ -9,14 +9,16 @@ require('./scheduler');
 
 const app = express();
 
-app.use(cors());
+// 🔥 CHANGED: Secure CORS Policy for Production
+app.use(cors({
+  origin: [
+    'http://localhost:5173',          // Your local Vite React server
+    process.env.FRONTEND_URL          // Your future live domain (Render/Vercel)
+  ],
+  credentials: true
+}));
+
 app.use(express.json());
-
-
-const path = require('path');
-
-// Tell Express to serve the 'uploads' folder publicly so React can see the images!
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // --- WE ADDED THESE TWO LINES ---
 const userRoutes = require('./routes/users');
@@ -36,6 +38,11 @@ app.use('/api/clients', clientRoutes);
 const invoiceRoutes = require('./routes/invoices');
 app.use('/api/invoices', invoiceRoutes);
 // ---------------------------
+
+// --- 🔥 NEW: SUB VENDORS ROUTE 🔥 ---
+const subVendorRoutes = require('./routes/subVendors');
+app.use('/api/sub_vendors', subVendorRoutes);
+// ------------------------------------
 
 app.use('/api/auth', require('./routes/auth'));
 

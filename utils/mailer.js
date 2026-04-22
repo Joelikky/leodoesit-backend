@@ -20,7 +20,7 @@ const getTransporter = (isGandiva) => {
     });
 };
 
-// 🔥 NEW: Logo Attachment Configurations for BOTH portals
+// Logo Attachment Configurations for BOTH portals
 const ldiLogoAttachment = {
     filename: 'LDI Logo.png',
     path: path.join(__dirname, 'LDI Logo.png'), 
@@ -51,7 +51,6 @@ const leodoesitSignature = `
     </div>
 `;
 
-// 🔥 UPDATED: Now includes the embedded Gandiva logo image
 const gandivaSignature = `
     <br/>
     <div style="font-family: Arial, sans-serif; color: #333; font-size: 14px; line-height: 1.5;">
@@ -63,8 +62,8 @@ const gandivaSignature = `
     </div>
 `;
 
-// 1. INVOICE EMAIL
-const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, monthYear, pdfBuffer, invoiceNumber) => {
+// 1. INVOICE EMAIL (🔥 CHANGED: Accepts s3PdfUrl instead of pdfBuffer)
+const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, monthYear, s3PdfUrl, invoiceNumber) => {
     try {
         const isGandiva = tenantPrefix === 'gandiva';
         const transporter = getTransporter(isGandiva);
@@ -80,8 +79,11 @@ const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, month
             </div>
         `;
 
-        // Smart Attachments: Include the PDF + the correct portal logo
-        const attachments = [{ filename: `Invoice_${invoiceNumber}.pdf`, content: pdfBuffer }];
+        // 🔥 CHANGED: Use 'href' to pull the PDF straight from AWS S3!
+        const attachments = [{ 
+            filename: `Invoice_${invoiceNumber}.pdf`, 
+            href: s3PdfUrl 
+        }];
         attachments.push(isGandiva ? gandivaLogoAttachment : ldiLogoAttachment);
 
         const mailOptions = {

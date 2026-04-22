@@ -1,8 +1,11 @@
 const puppeteer = require('puppeteer');
-const fs = require('fs');
-const path = require('path');
 
-const generateInvoicePDF = async (data, outputPath) => {
+/**
+ * Generates an Invoice PDF and returns it as a Memory Buffer
+ * @param {Object} data - The invoice data
+ * @returns {Buffer} - The raw PDF data ready for S3 upload
+ */
+const generateInvoiceBuffer = async (data) => {
     // 1. Determine which company layout to use
     const isGandiva = data.companyName.toLowerCase().includes('gandiva');
     
@@ -240,23 +243,20 @@ const generateInvoicePDF = async (data, outputPath) => {
         `;
     }
 
-    // 3. Generate the PDF Document
-    const dir = path.dirname(outputPath);
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-
+    // 3. Generate the PDF Document in Memory
     const browser = await puppeteer.launch({ headless: "new" });
     const page = await browser.newPage();
     await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
     
-    await page.pdf({ 
-        path: outputPath, 
+    // By removing the `path` option, Puppeteer returns the PDF as a Buffer!
+    const pdfBuffer = await page.pdf({ 
         format: 'A4', 
         printBackground: true
     });
     
     await browser.close();
+    
+    return pdfBuffer;
 };
 
-module.exports = { generateInvoicePDF };
+module.exports = { generateInvoiceBuffer };

@@ -14,11 +14,11 @@ router.get('/', async (req, res) => {
     const query = `
       SELECT 
         u.id, u.first_name, u.last_name, u.email, u.is_active, u.tenant_id, 
-        COALESCE(u.is_deleted, false) AS is_deleted, -- 🔥 NEW: Fetch the archive status
+        COALESCE(u.is_deleted, false) AS is_deleted,
         e.phone_number, e.address, TO_CHAR(e.dob, 'YYYY-MM-DD') as dob, e.visa_status,
         e.role, TO_CHAR(e.start_date, 'YYYY-MM-DD') as start_date, e.invoice_num, e.contract_type,
         e.pay_rate, e.invoice_rate,
-        e.c2c_name, e.c2c_email, e.c2c_phone,
+        e.c2c_name, e.c2c_email, e.c2c_phone, e.c2c_net_terms, e.c2c_address,
         e.vendor_name, e.vendor_email, e.vendor_address, e.vendor_for, 
         TO_CHAR(e.project_start_date, 'YYYY-MM-DD') as project_start_date, e.net_terms,
         e.i9_completed, e.w4_completed, e.everify_completed, e.bank_details_completed
@@ -43,7 +43,7 @@ router.post('/', async (req, res) => {
     phone_number, address, dob, visa_status,
     role, start_date, invoice_num, contract_type,
     pay_rate, invoice_rate,
-    c2c_name, c2c_email, c2c_phone,
+    c2c_name, c2c_email, c2c_phone, c2c_net_terms, c2c_address,
     vendor_name, vendor_email, vendor_address, vendor_for, project_start_date, net_terms,
     i9_completed, w4_completed, everify_completed, bank_details_completed
   } = req.body;
@@ -51,7 +51,6 @@ router.post('/', async (req, res) => {
   try {
     await db.query('BEGIN');
 
-    // Create the core login and link it to the company (tenant_id)
     const userQuery = `
       INSERT INTO public.users (first_name, last_name, email, tenant_id)
       VALUES ($1, $2, $3, $4)
@@ -60,19 +59,18 @@ router.post('/', async (req, res) => {
     const userResult = await db.query(userQuery, [first_name, last_name, email, tenant_id]);
     const newUser = userResult.rows[0];
 
-    // Create the HR details and link them as well
     const detailsQuery = `
       INSERT INTO public.employee_details (
         user_id, tenant_id, phone_number, address, dob, visa_status,
         role, start_date, invoice_num, contract_type,
         pay_rate, invoice_rate,
-        c2c_name, c2c_email, c2c_phone,
+        c2c_name, c2c_email, c2c_phone, c2c_net_terms, c2c_address,
         vendor_name, vendor_email, vendor_address, vendor_for, project_start_date, net_terms,
         i9_completed, w4_completed, everify_completed, bank_details_completed
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 
-        $21, $22, $23, $24, $25
+        $21, $22, $23, $24, $25, $26, $27
       )
     `;
     
@@ -82,7 +80,7 @@ router.post('/', async (req, res) => {
       newUser.id, tenant_id, phone_number, address, safeDate(dob), visa_status,
       role, safeDate(start_date), invoice_num, contract_type || 'W2',
       parseFloat(pay_rate || 0), parseFloat(invoice_rate || 0),
-      c2c_name, c2c_email, c2c_phone,
+      c2c_name, c2c_email, c2c_phone, c2c_net_terms, c2c_address,
       vendor_name, vendor_email, vendor_address, vendor_for, safeDate(project_start_date), net_terms,
       i9_completed || false, w4_completed || false, everify_completed || false, bank_details_completed || false
     ];
@@ -106,7 +104,7 @@ router.put('/:id', async (req, res) => {
     phone_number, address, dob, visa_status,
     role, start_date, invoice_num, contract_type,
     pay_rate, invoice_rate,
-    c2c_name, c2c_email, c2c_phone,
+    c2c_name, c2c_email, c2c_phone, c2c_net_terms, c2c_address,
     vendor_name, vendor_email, vendor_address, 
     vendor_for, project_start_date, net_terms, 
     i9_completed, w4_completed, everify_completed, bank_details_completed
@@ -115,7 +113,6 @@ router.put('/:id', async (req, res) => {
   try {
     await db.query('BEGIN');
 
-    // 1. Update the core user table
     const userQuery = `
       UPDATE public.users 
       SET first_name = $1, last_name = $2, email = $3, is_active = $4
@@ -123,28 +120,26 @@ router.put('/:id', async (req, res) => {
     `;
     await db.query(userQuery, [first_name, last_name, email, is_active, userId]);
 
-    // 2. Update the employee details table
     const detailsQuery = `
       UPDATE public.employee_details 
       SET 
         phone_number = $1, address = $2, dob = $3, visa_status = $4,
         role = $5, start_date = $6, invoice_num = $7, contract_type = $8,
         pay_rate = $9, invoice_rate = $10,
-        c2c_name = $11, c2c_email = $12, c2c_phone = $13,
-        vendor_name = $14, vendor_email = $15, vendor_address = $16,
-        vendor_for = $17, project_start_date = $18, net_terms = $19,
-        i9_completed = $20, w4_completed = $21, everify_completed = $22, bank_details_completed = $23
-      WHERE user_id = $24
+        c2c_name = $11, c2c_email = $12, c2c_phone = $13, c2c_net_terms = $14, c2c_address = $15,
+        vendor_name = $16, vendor_email = $17, vendor_address = $18,
+        vendor_for = $19, project_start_date = $20, net_terms = $21,
+        i9_completed = $22, w4_completed = $23, everify_completed = $24, bank_details_completed = $25
+      WHERE user_id = $26
     `;
 
-    // Helper to safely format empty dates
     const safeDate = (dateStr) => (dateStr && dateStr.trim() !== '') ? dateStr : null;
 
     const detailsValues = [
       phone_number, address, safeDate(dob), visa_status,
       role, safeDate(start_date), invoice_num, contract_type || 'W2',
       parseFloat(pay_rate || 0), parseFloat(invoice_rate || 0),
-      c2c_name, c2c_email, c2c_phone,
+      c2c_name, c2c_email, c2c_phone, c2c_net_terms, c2c_address,
       vendor_name, vendor_email, vendor_address, 
       vendor_for, safeDate(project_start_date), net_terms, 
       i9_completed || false, w4_completed || false, everify_completed || false, bank_details_completed || false,
@@ -154,7 +149,6 @@ router.put('/:id', async (req, res) => {
     await db.query(detailsQuery, detailsValues);
     await db.query('COMMIT');
     
-    // 3. Fetch the fresh data to send back to React so the UI updates instantly
     const updatedUserQuery = `
       SELECT u.id, u.first_name, u.last_name, u.email, u.is_active, u.tenant_id, COALESCE(u.is_deleted, false) AS is_deleted,
              e.* FROM public.users u
@@ -172,11 +166,10 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// 4. DELETE: SOFT DELETE (Move to Archive/Trash)
+// 4. DELETE: SOFT DELETE
 router.delete('/:id', async (req, res) => {
   const userId = req.params.id;
   try {
-    // We only update the flag to hide them, we don't delete the row!
     await db.query('UPDATE public.users SET is_deleted = true WHERE id = $1', [userId]);
     res.json({ success: true, message: "Employee safely archived." });
   } catch (err) {
@@ -189,7 +182,6 @@ router.delete('/:id', async (req, res) => {
 router.put('/:id/restore', async (req, res) => {
   const userId = req.params.id;
   try {
-    // Un-hide them!
     await db.query('UPDATE public.users SET is_deleted = false WHERE id = $1', [userId]);
     res.json({ success: true, message: "Employee restored successfully!" });
   } catch (err) {
@@ -198,31 +190,23 @@ router.put('/:id/restore', async (req, res) => {
   }
 });
 
-// 6. DELETE: PERMANENTLY DESTROY (Only allowed from the Trash UI)
+// 6. DELETE: PERMANENTLY DESTROY
 router.delete('/:id/permanent', async (req, res) => {
   const userId = req.params.id;
-
   try {
     await db.query('BEGIN');
-    
-    // First delete their HR details, then delete their core login account
     await db.query('DELETE FROM public.employee_details WHERE user_id = $1', [userId]);
     await db.query('DELETE FROM public.users WHERE id = $1', [userId]);
-    
     await db.query('COMMIT');
     res.json({ success: true, message: "Employee permanently deleted." });
-
   } catch (err) {
     await db.query('ROLLBACK');
-    
-    // SAFETY NET: If Postgres throws a "Foreign Key Violation" (code 23503)
     if (err.code === '23503') {
        return res.status(400).json({ 
          success: false, 
          error: "Cannot permanently delete this employee because they already have linked timesheets or invoices in the system." 
        });
     }
-    
     console.error("Permanent Delete Error:", err.message);
     res.status(500).json({ success: false, error: "Failed to permanently delete employee." });
   }

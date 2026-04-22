@@ -5,23 +5,16 @@ const multer = require('multer');
 const path = require('path');
 const { sendRejectionEmail } = require('../utils/mailer');
 
-// --- MULTER LUGGAGE HANDLER SETUP ---
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/');
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
-});
+// 🔥 NEW: Import our S3 tools
+const { uploadTimesheetToS3, generateSignedUrl } = require('../utils/s3Service');
+
+// 🔥 CHANGED: Memory Storage holds the file in RAM instead of saving to disk!
+const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
-// ------------------------------------
 
 // 1. GET ROUTE: Fetch ALL timesheets (For the Admin Queue & Hub)
 router.get('/', async (req, res) => {
   const { status } = req.query; 
-  // 🔥 FIX 1: Grab the tenant ID so we don't leak data!
   const tenantId = req.headers['x-tenant-id']; 
 
   try {
@@ -42,7 +35,19 @@ router.get('/', async (req, res) => {
     query += ` ORDER BY t.created_at DESC;`;
 
     const result = await db.query(query, values);
-    res.json({ success: true, count: result.rowCount, data: result.rows });
+    let timesheets = result.rows;
+
+    // 🔥 NEW: Convert secure S3 keys into temporary viewing URLs for the frontend
+    for (let ts of timesheets) {
+        if (ts.screenshot_urls && ts.screenshot_urls.length > 0) {
+            ts.screenshot_urls = await Promise.all(ts.screenshot_urls.map(async (key) => {
+                if (key.startsWith('http')) return key; // Keeps your old localhost tests working
+                return await generateSignedUrl(key);
+            }));
+        }
+    }
+
+    res.json({ success: true, count: timesheets.length, data: timesheets });
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ success: false, error: "Failed to fetch timesheets" });
@@ -58,14 +63,25 @@ router.get('/me/:email', async (req, res) => {
       FROM timesheets t
       JOIN users u ON t.user_id = u.id
       WHERE u.email = $1
-      ORDER BY t.created_at DESC
-      LIMIT 1;
+      ORDER BY t.created_at DESC;
     `;
     const result = await db.query(query, [email]);
-    res.json({ success: true, data: result.rows[0] || null });
+    let timesheets = result.rows;
+
+    // 🔥 NEW: Convert secure S3 keys into temporary viewing URLs for the frontend
+    for (let ts of timesheets) {
+        if (ts.screenshot_urls && ts.screenshot_urls.length > 0) {
+            ts.screenshot_urls = await Promise.all(ts.screenshot_urls.map(async (key) => {
+                if (key.startsWith('http')) return key;
+                return await generateSignedUrl(key);
+            }));
+        }
+    }
+
+    res.json({ success: true, data: timesheets }); 
   } catch (err) {
     console.error(err.message);
-    res.status(500).json({ success: false, error: "Failed to fetch your timesheet." });
+    res.status(500).json({ success: false, error: "Failed to fetch your timesheets." });
   }
 });
 
@@ -74,14 +90,27 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
   const { user_id, period_start, period_end, total_hours } = req.body;
   
   try {
-    const screenshot_urls = req.files ? req.files.map(file => `http://localhost:5000/uploads/${file.filename}`) : [];
+    const screenshot_keys = [];
+
+    // 🔥 CHANGED: Upload each image directly to AWS S3 from RAM
+    if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            const fileName = `${uniqueSuffix}${path.extname(file.originalname)}`;
+            
+            const s3Key = await uploadTimesheetToS3(file.buffer, fileName, file.mimetype);
+            if (s3Key) {
+                screenshot_keys.push(s3Key);
+            }
+        }
+    }
 
     const query = `
       INSERT INTO timesheets (user_id, period_start, period_end, total_hours, status, screenshot_urls)
       VALUES ($1, $2, $3, $4, 'SUBMITTED', $5)
       RETURNING *;
     `;
-    const values = [user_id, period_start, period_end, total_hours, screenshot_urls];
+    const values = [user_id, period_start, period_end, total_hours, screenshot_keys];
     const result = await db.query(query, values);
     
     res.status(201).json({ success: true, data: result.rows[0] });

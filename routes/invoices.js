@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const path = require('path');
 
-const { generateInvoicePDF } = require('../utils/pdfGenerator');
+// 🔥 IMPORTED generateSignedUrl from s3Service
+const { generateInvoiceBuffer } = require('../utils/pdfGenerator');
+const { uploadInvoiceToS3, generateSignedUrl } = require('../utils/s3Service');
 const { sendInvoiceEmail, sendBalanceReminderEmail } = require('../utils/mailer');
 
 // 1. GET ROUTE: Fetch all invoices FOR THE LOGGED-IN PORTAL ONLY
@@ -12,7 +13,7 @@ router.get('/', async (req, res) => {
   try {
     const query = `
       SELECT 
-        i.id, i.invoice_number, i.status, i.due_date, i.emailed_at,
+        i.id, i.invoice_number, i.status, i.due_date, i.emailed_at, i.file_url,
         COALESCE(i.amount_paid, 0) AS amount_paid,
         c.company_name AS client_name,
         u.first_name, u.last_name, u.tenant_id,
@@ -31,7 +32,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 2. POST ROUTE: Generate a new invoice & PDF
+// 2. POST ROUTE: Generate a new invoice & PDF (S3 UPLOAD)
 router.post('/', async (req, res) => {
   const { client_id, timesheet_id, tenant_id } = req.body;
 
@@ -78,33 +79,39 @@ router.post('/', async (req, res) => {
     const dueDateObj = new Date();
     dueDateObj.setDate(today.getDate() + termsDays);
     
-    const pdfFileName = `Invoice_TS_${timesheet_id}.pdf`;
-    const pdfPath = path.join(__dirname, '..', 'invoices', pdfFileName); 
+    const pdfFileName = `Invoice_TS_${timesheet_id}_${uniquePin}.pdf`;
 
-    await generateInvoicePDF({
+    const pdfBuffer = await generateInvoiceBuffer({
         companyName: data.domain_prefix === 'gandiva' ? 'Gandiva Insights' : 'Leo Does IT Inc.',
         invoiceNumber: invoiceNumber, invoiceDate: formatDate(today), netTerms: termsString,
         dueDate: formatDate(dueDateObj), clientName: data.client_name, clientAddress: data.client_address || '',
         vendorFor: data.vendor_for || 'N/A', contractorName: `${data.first_name} ${data.last_name}`,
         role: data.role || 'IT Consultant', hours: hours, billingRate: rate,
         billingPeriod: `${new Date(data.period_start).toLocaleDateString('en-US')} - ${new Date(data.period_end).toLocaleDateString('en-US')}`
-    }, pdfPath);
+    });
+
+    const s3Url = await uploadInvoiceToS3(pdfBuffer, pdfFileName);
+
+    if (!s3Url) {
+        return res.status(500).json({ success: false, error: "Failed to upload PDF to AWS S3." });
+    }
 
     const insertQuery = `
-    INSERT INTO invoices (client_id, timesheet_id, invoice_number, hours_billed, hourly_rate_applied, status, due_date, amount_paid)
-    VALUES ($1, $2, $3, $4, $5, 'UNPAID', CURRENT_DATE + INTERVAL '${termsDays} days', 0)
+    INSERT INTO invoices (client_id, timesheet_id, invoice_number, hours_billed, hourly_rate_applied, status, due_date, amount_paid, file_url)
+    VALUES ($1, $2, $3, $4, $5, 'UNPAID', CURRENT_DATE + INTERVAL '${termsDays} days', 0, $6)
     RETURNING *;
     `;
-    const insertResult = await db.query(insertQuery, [client_id, timesheet_id, invoiceNumber, hours, rate]);
+    const insertResult = await db.query(insertQuery, [client_id, timesheet_id, invoiceNumber, hours, rate, s3Url]);
     await db.query(`UPDATE timesheets SET status = 'INVOICED' WHERE id = $1;`, [timesheet_id]);
 
-    res.status(201).json({ success: true, message: "Invoice saved!", data: insertResult.rows[0] });
+    res.status(201).json({ success: true, message: "Invoice saved and uploaded!", data: insertResult.rows[0] });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false, error: "Failed to create invoice." });
   }
 });
 
-// 3. PUT ROUTE: 🔥 CRASH-PROOF PAYMENT HANDLING
+// 3. PUT ROUTE: CRASH-PROOF PAYMENT HANDLING
 router.put('/:id/pay', async (req, res) => {
   const { id } = req.params;
   const { payment_amount } = req.body; 
@@ -148,7 +155,7 @@ router.put('/:id/pay', async (req, res) => {
   }
 });
 
-// 4. PUT ROUTE: 🔥 VOID INVOICE
+// 4. PUT ROUTE: VOID INVOICE
 router.put('/:id/void', async (req, res) => {
   const { id } = req.params;
   try {
@@ -167,12 +174,12 @@ router.put('/:id/void', async (req, res) => {
   }
 });
 
-// 5. POST ROUTE: Trigger the Mailer Utility
+// 5. POST ROUTE: Trigger the Mailer Utility (🔥 UPDATED TO GENERATE SIGNED URL FOR NODEMAILER)
 router.post('/:id/send', async (req, res) => {
   const invoiceId = req.params.id;
   try {
       const query = `
-          SELECT i.timesheet_id, i.invoice_number, u.first_name, u.last_name, t.period_start, c.billing_email, ten.domain_prefix
+          SELECT i.timesheet_id, i.invoice_number, i.file_url, u.first_name, u.last_name, t.period_start, c.billing_email, ten.domain_prefix
           FROM invoices i
           JOIN timesheets t ON i.timesheet_id = t.id
           JOIN users u ON t.user_id = u.id
@@ -185,24 +192,33 @@ router.post('/:id/send', async (req, res) => {
 
       const data = result.rows[0];
       
-      // 🔥 FIX 1: Safety check for email
       if (!data.billing_email) {
           return res.status(400).json({ success: false, error: "The client attached to this invoice has no billing email address saved." });
       }
 
-      const pdfPath = path.join(__dirname, '..', 'invoices', `Invoice_TS_${data.timesheet_id}.pdf`);
+      let fileKey = data.file_url;
+      // Strip out the old HTTP url if it exists so AWS can sign it properly
+      if (fileKey && fileKey.startsWith('http')) {
+          const splitParts = fileKey.split('.amazonaws.com/');
+          if (splitParts.length > 1) {
+              fileKey = splitParts[1];
+          }
+      }
+
+      // Generate a temporary URL so Nodemailer can safely download it to attach to the email
+      const secureUrlForEmail = await generateSignedUrl(fileKey);
       const monthYear = new Date(data.period_start).toLocaleString('en-US', { month: 'long', year: 'numeric' });
       
-      const emailSent = await sendInvoiceEmail(data.domain_prefix, data.billing_email, `${data.first_name} ${data.last_name}`, monthYear, pdfPath, data.invoice_number);
+      const emailSent = await sendInvoiceEmail(data.domain_prefix, data.billing_email, `${data.first_name} ${data.last_name}`, monthYear, secureUrlForEmail, data.invoice_number);
 
       if (emailSent) {
         await db.query(`UPDATE invoices SET emailed_at = CURRENT_TIMESTAMP WHERE id = $1`, [invoiceId]);
         res.json({ success: true, message: `Email sent!` });
       } else {
-        // 🔥 FIX 2: Clearer error message
-        res.status(500).json({ success: false, error: "Zoho rejected the email. Check your backend terminal (where nodemon is running) to see the exact error." });
+        res.status(500).json({ success: false, error: "Email rejected. Check your backend terminal for details." });
       }
   } catch (error) {
+      console.error(error);
       res.status(500).json({ success: false, error: "Server error." });
   }
 });
@@ -229,7 +245,6 @@ router.post('/:id/remind', async (req, res) => {
         
         if (balanceDue <= 0) return res.status(400).json({ success: false, error: "This invoice is already fully paid!" });
 
-        // 🔥 FIX 1: Make sure the email exists before trying to send!
         if (!data.billing_email) {
             return res.status(400).json({ success: false, error: "The client attached to this invoice has no billing email address saved." });
         }
@@ -239,7 +254,6 @@ router.post('/:id/remind', async (req, res) => {
         if (emailSent) {
           res.json({ success: true, message: `Reminder sent to ${data.billing_email}!` });
         } else {
-          // 🔥 FIX 2: Check the console log to see why Zoho rejected it!
           res.status(500).json({ success: false, error: "Zoho rejected the email. Check your backend terminal (where nodemon is running) to see the exact error." });
         }
     } catch (error) {
@@ -247,16 +261,41 @@ router.post('/:id/remind', async (req, res) => {
     }
   });
 
-// 7. GET ROUTE: Download the PDF
+// 7. GET ROUTE: Securely Download/View the PDF via Signed URL
 router.get('/:id/download', async (req, res) => {
     const invoiceId = req.params.id;
     try {
-        const query = `SELECT timesheet_id FROM invoices WHERE id = $1`;
+        const query = `SELECT file_url FROM invoices WHERE id = $1`;
         const result = await db.query(query, [invoiceId]);
-        if (result.rowCount === 0) return res.status(404).send("Invoice not found.");
-        res.download(path.join(__dirname, '..', 'invoices', `Invoice_TS_${result.rows[0].timesheet_id}.pdf`));
+        
+        let fileKey = result.rows[0]?.file_url;
+        
+        if (!fileKey) {
+            return res.status(404).send("Invoice file not found.");
+        }
+
+        // 🔥 STRIP OFF OLD URL IF NEEDED: 
+        // Ensures AWS signs "invoices/filename.pdf" instead of "https://..."
+        if (fileKey.startsWith('http')) {
+            const splitParts = fileKey.split('.amazonaws.com/');
+            if (splitParts.length > 1) {
+                fileKey = splitParts[1];
+            }
+        }
+
+        // Ask AWS for a temporary 15-minute VIP pass using the file key
+        const secureUrl = await generateSignedUrl(fileKey);
+
+        if (!secureUrl) {
+            return res.status(500).send("Server error generating secure link.");
+        }
+
+        // Instantly redirect the user's browser to the secure AWS link
+        res.redirect(secureUrl);
+
     } catch (error) {
-        res.status(500).send("Server error downloading file.");
+        console.error("Download Error:", error);
+        res.status(500).send("Server error redirecting to file.");
     }
 });
 
