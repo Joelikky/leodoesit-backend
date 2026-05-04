@@ -1,24 +1,34 @@
 const nodemailer = require('nodemailer');
 const path = require('path');
 
-const getTransporter = (isGandiva) => {
-    // 🔥 DYNAMIC SERVER LOGIC
-    // Gandiva uses Zoho | Leodoesit uses Outlook (Office365)
-    const host = isGandiva ? 'smtp.zoho.com' : 'smtp.office365.com';
-    const user = isGandiva ? process.env.GANDIVA_EMAIL : process.env.EMAIL_USER;
-    const pass = isGandiva ? process.env.GANDIVA_PASS : process.env.EMAIL_PASS;
+// ==========================================
+// 🚀 DYNAMIC, POOLED TRANSPORTER LOGIC
+// We create these ONCE at the top so they actually share the pool!
+// ==========================================
 
-    return nodemailer.createTransport({
-        host: host,
-        port: 587,
-        secure: false, // TLS
-        auth: { user, pass },
-        tls: {
-            ciphers: 'SSLv3',
-            rejectUnauthorized: false
-        }
-    });
-};
+const gandivaTransporter = nodemailer.createTransport({
+    host: 'smtp.zoho.com',
+    port: 587,
+    secure: false, // TLS
+    pool: true,              
+    maxConnections: 1,      
+    maxMessages: 100,       
+    auth: { user: process.env.GANDIVA_EMAIL, pass: process.env.GANDIVA_PASS },
+    tls: { ciphers: 'SSLv3', rejectUnauthorized: false }
+});
+
+const ldiTransporter = nodemailer.createTransport({
+    host: 'smtp.office365.com',
+    port: 587,
+    secure: false, // TLS
+    pool: true,              
+    maxConnections: 1,      
+    maxMessages: 100,       
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    tls: { ciphers: 'SSLv3', rejectUnauthorized: false }
+});
+
+const getTransporter = (isGandiva) => isGandiva ? gandivaTransporter : ldiTransporter;
 
 // Logo Attachment Configurations for BOTH portals
 const ldiLogoAttachment = {
@@ -62,7 +72,7 @@ const gandivaSignature = `
     </div>
 `;
 
-// 1. INVOICE EMAIL (🔥 CHANGED: Accepts s3PdfUrl instead of pdfBuffer)
+// 1. INVOICE EMAIL
 const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, monthYear, s3PdfUrl, invoiceNumber) => {
     try {
         const isGandiva = tenantPrefix === 'gandiva';
@@ -79,7 +89,6 @@ const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, month
             </div>
         `;
 
-        // 🔥 CHANGED: Use 'href' to pull the PDF straight from AWS S3!
         const attachments = [{ 
             filename: `Invoice_${invoiceNumber}.pdf`, 
             href: s3PdfUrl 
@@ -118,7 +127,6 @@ const sendBalanceReminderEmail = async (tenantPrefix, clientEmail, contractorNam
                 ${isGandiva ? gandivaSignature : leodoesitSignature}
             </div>`;
 
-        // Smart Attachments: Just the correct portal logo
         const attachments = [isGandiva ? gandivaLogoAttachment : ldiLogoAttachment];
 
         const mailOptions = {
@@ -153,7 +161,6 @@ const sendTimesheetReminder = async (tenantPrefix, contractorEmail, contractorNa
                 ${isGandiva ? gandivaSignature : leodoesitSignature}
             </div>`;
 
-        // Smart Attachments: Just the correct portal logo
         const attachments = [isGandiva ? gandivaLogoAttachment : ldiLogoAttachment];
 
         const mailOptions = {
@@ -172,4 +179,119 @@ const sendTimesheetReminder = async (tenantPrefix, contractorEmail, contractorNa
     }
 };
 
-module.exports = { sendInvoiceEmail, sendBalanceReminderEmail, sendTimesheetReminder };
+// 4. REJECTION EMAIL
+const sendRejectionEmail = async (tenantPrefix, contractorEmail, contractorName, billingPeriod, rejectionReason) => {
+    try {
+        const isGandiva = tenantPrefix === 'gandiva';
+        const transporter = getTransporter(isGandiva); 
+        const fromEmail = isGandiva ? process.env.GANDIVA_EMAIL : process.env.EMAIL_USER;
+
+        const htmlContent = `
+            <div style="font-family: Arial, sans-serif; color: #222; font-size: 14px; line-height: 1.6; max-width: 600px;">
+                <p>Hi ${contractorName},</p>
+                <p>Unfortunately, your timesheet for the period <strong>${billingPeriod}</strong> has been rejected.</p>
+                <div style="background-color: #FEF2F2; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #EF4444;">
+                    <p style="margin: 0; color: #991B1B;"><strong>Reason for Rejection:</strong> ${rejectionReason}</p>
+                </div>
+                <p>Please log into your portal to review, make the necessary corrections, and resubmit.</p>
+                <p>Thank you,</p>
+                ${isGandiva ? gandivaSignature : leodoesitSignature}
+            </div>`;
+
+        const mailOptions = {
+            from: fromEmail,
+            to: contractorEmail,
+            subject: `Action Required: Timesheet Rejected for ${billingPeriod}`,
+            html: htmlContent,
+            attachments: [isGandiva ? gandivaLogoAttachment : ldiLogoAttachment]
+        };
+
+        await transporter.sendMail(mailOptions);
+        return true;
+    } catch (error) {
+        console.error("Rejection Mailer Error:", error.message);
+        return false;
+    }
+};
+
+// 5. TIMESHEET SUBMISSION CONFIRMATION EMAIL
+const sendTimesheetSubmissionEmail = async (tenantPrefix, employeeEmail, adminEmail, employeeName, billingPeriod, totalHours) => {
+    try {
+        const isGandiva = tenantPrefix === 'gandiva';
+        const transporter = getTransporter(isGandiva); 
+        const fromEmail = isGandiva ? process.env.GANDIVA_EMAIL : process.env.EMAIL_USER;
+        const teamName = isGandiva ? "Gandiva Insights Admin Team" : "Leodoes IT Admin Team";
+
+        const mailOptions = {
+            from: `"${teamName}" <${fromEmail}>`,
+            to: employeeEmail,
+            cc: adminEmail, 
+            subject: `Timesheet Submitted: ${employeeName} (${billingPeriod})`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #111827;">
+                    <h2 style="color: #10B981;">Timesheet Received ✅</h2>
+                    <p>Hi ${employeeName},</p>
+                    <p>Your timesheet for the period <strong>${billingPeriod}</strong> has been successfully submitted and is now pending admin approval.</p>
+                    
+                    <div style="background-color: #F3F4F6; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #3B82F6;">
+                        <p style="margin: 0;"><strong>Total Hours Logged:</strong> ${totalHours} hrs</p>
+                    </div>
+                    
+                    <p>You will receive another notification once this has been officially approved or if any adjustments are needed.</p>
+                    <p>Best regards,<br><strong>${teamName}</strong></p>
+                </div>
+            `
+        };
+
+        await transporter.sendMail(mailOptions);
+        return true;
+    } catch (error) {
+        console.error("❌ Timesheet Confirmation Email Failed:", error.message);
+        return false;
+    }
+};
+// 6. TIMESHEET APPROVAL EMAIL (🔥 NEW)
+const sendTimesheetApprovalEmail = async (tenantPrefix, contractorEmail, contractorName, billingPeriod, totalHours) => {
+    try {
+        const isGandiva = tenantPrefix === 'gandiva';
+        const transporter = getTransporter(isGandiva); 
+        const fromEmail = isGandiva ? process.env.GANDIVA_EMAIL : process.env.EMAIL_USER;
+        const teamName = isGandiva ? "Gandiva Insights Admin Team" : "Leodoes IT Admin Team";
+
+        const mailOptions = {
+            from: `"${teamName}" <${fromEmail}>`,
+            to: contractorEmail,
+            subject: `Timesheet Approved: ${billingPeriod}`,
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #111827;">
+                    <h2 style="color: #10B981;">Timesheet Approved ✅</h2>
+                    <p>Hi ${contractorName},</p>
+                    <p>Great news! Your timesheet for the period <strong>${billingPeriod}</strong> has been reviewed and officially approved.</p>
+                    
+                    <div style="background-color: #F0FDF4; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #10B981;">
+                        <p style="margin: 0; color: #065F46;"><strong>Approved Hours:</strong> ${totalHours} hrs</p>
+                    </div>
+                    
+                    <p>These hours will now be moved to the Invoicing Hub for final processing. Thank you for your hard work!</p>
+                    <p>Best regards,<br><strong>${teamName}</strong></p>
+                </div>
+            `
+        };
+
+        await transporter.sendMail(mailOptions);
+        return true;
+    } catch (error) {
+        console.error("❌ Approval Confirmation Email Failed:", error.message);
+        return false;
+    }
+};
+
+// 🔥 Export ALL functions so your routes don't crash
+module.exports = { 
+    sendRejectionEmail, 
+    sendInvoiceEmail, 
+    sendBalanceReminderEmail, 
+    sendTimesheetReminder, 
+    sendTimesheetSubmissionEmail,
+    sendTimesheetApprovalEmail // 🔥 Added this!
+};

@@ -6,8 +6,9 @@ const db = require('../db');
 router.get('/', async (req, res) => {
   const tenantId = req.headers['x-tenant-id']; 
 
+  // 🔥 SECURITY CHECK: Demand tenant ID
   if (!tenantId) {
-    return res.status(400).json({ success: false, error: "Tenant ID is required." });
+    return res.status(400).json({ success: false, error: "Access Denied: Tenant ID is required." });
   }
 
   try {
@@ -35,11 +36,16 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 2. POST: Create a new employee linked to the specific portal
+// 2. POST: Create a new employee linked strictly to the requesting tenant
 router.post('/', async (req, res) => {
+  const tenantId = req.headers['x-tenant-id']; 
+
+  if (!tenantId) {
+    return res.status(400).json({ success: false, error: "Access Denied: Tenant ID is required." });
+  }
+
   const {
     first_name, last_name, email,
-    tenant_id, 
     phone_number, address, dob, visa_status,
     role, start_date, invoice_num, contract_type,
     pay_rate, invoice_rate,
@@ -51,12 +57,13 @@ router.post('/', async (req, res) => {
   try {
     await db.query('BEGIN');
 
+    // 🔥 Force the user to be created under the header's tenantId, ignoring anything else
     const userQuery = `
       INSERT INTO public.users (first_name, last_name, email, tenant_id)
       VALUES ($1, $2, $3, $4)
       RETURNING id, first_name, last_name, email, is_active, tenant_id;
     `;
-    const userResult = await db.query(userQuery, [first_name, last_name, email, tenant_id]);
+    const userResult = await db.query(userQuery, [first_name, last_name, email, tenantId]);
     const newUser = userResult.rows[0];
 
     const detailsQuery = `
@@ -77,7 +84,7 @@ router.post('/', async (req, res) => {
     const safeDate = (dateStr) => (dateStr && dateStr.trim() !== '') ? dateStr : null;
 
     const detailsValues = [
-      newUser.id, tenant_id, phone_number, address, safeDate(dob), visa_status,
+      newUser.id, tenantId, phone_number, address, safeDate(dob), visa_status,
       role, safeDate(start_date), invoice_num, contract_type || 'W2',
       parseFloat(pay_rate || 0), parseFloat(invoice_rate || 0),
       c2c_name, c2c_email, c2c_phone, c2c_net_terms, c2c_address,
@@ -96,9 +103,15 @@ router.post('/', async (req, res) => {
   }
 });
 
-// 3. PUT: Update an existing employee
+// 3. PUT: Update an existing employee (Locked to Tenant)
 router.put('/:id', async (req, res) => {
   const userId = req.params.id;
+  const tenantId = req.headers['x-tenant-id']; 
+
+  if (!tenantId) {
+    return res.status(400).json({ success: false, error: "Access Denied: Tenant ID is required." });
+  }
+
   const {
     first_name, last_name, email, is_active,
     phone_number, address, dob, visa_status,
@@ -113,12 +126,20 @@ router.put('/:id', async (req, res) => {
   try {
     await db.query('BEGIN');
 
+    // 🔥 Added tenant_id to the WHERE clause to prevent cross-tenant updates
     const userQuery = `
       UPDATE public.users 
       SET first_name = $1, last_name = $2, email = $3, is_active = $4
-      WHERE id = $5;
+      WHERE id = $5 AND tenant_id = $6
+      RETURNING id;
     `;
-    await db.query(userQuery, [first_name, last_name, email, is_active, userId]);
+    const userResult = await db.query(userQuery, [first_name, last_name, email, is_active, userId, tenantId]);
+    
+    // If the user doesn't belong to this tenant, abort!
+    if (userResult.rows.length === 0) {
+        await db.query('ROLLBACK');
+        return res.status(404).json({ success: false, error: "Employee not found or access denied." });
+    }
 
     const detailsQuery = `
       UPDATE public.employee_details 
@@ -130,7 +151,7 @@ router.put('/:id', async (req, res) => {
         vendor_name = $16, vendor_email = $17, vendor_address = $18,
         vendor_for = $19, project_start_date = $20, net_terms = $21,
         i9_completed = $22, w4_completed = $23, everify_completed = $24, bank_details_completed = $25
-      WHERE user_id = $26
+      WHERE user_id = $26 AND tenant_id = $27
     `;
 
     const safeDate = (dateStr) => (dateStr && dateStr.trim() !== '') ? dateStr : null;
@@ -143,7 +164,7 @@ router.put('/:id', async (req, res) => {
       vendor_name, vendor_email, vendor_address, 
       vendor_for, safeDate(project_start_date), net_terms, 
       i9_completed || false, w4_completed || false, everify_completed || false, bank_details_completed || false,
-      userId
+      userId, tenantId
     ];
 
     await db.query(detailsQuery, detailsValues);
@@ -166,11 +187,17 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// 4. DELETE: SOFT DELETE
+// 4. DELETE: SOFT DELETE (Locked to Tenant)
 router.delete('/:id', async (req, res) => {
   const userId = req.params.id;
+  const tenantId = req.headers['x-tenant-id']; 
+
+  if (!tenantId) return res.status(400).json({ success: false, error: "Tenant ID required." });
+
   try {
-    await db.query('UPDATE public.users SET is_deleted = true WHERE id = $1', [userId]);
+    const result = await db.query('UPDATE public.users SET is_deleted = true WHERE id = $1 AND tenant_id = $2 RETURNING id', [userId, tenantId]);
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: "Employee not found." });
+    
     res.json({ success: true, message: "Employee safely archived." });
   } catch (err) {
     console.error("Archive Error:", err.message);
@@ -178,11 +205,17 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// 5. PUT: RESTORE FROM TRASH
+// 5. PUT: RESTORE FROM TRASH (Locked to Tenant)
 router.put('/:id/restore', async (req, res) => {
   const userId = req.params.id;
+  const tenantId = req.headers['x-tenant-id']; 
+
+  if (!tenantId) return res.status(400).json({ success: false, error: "Tenant ID required." });
+
   try {
-    await db.query('UPDATE public.users SET is_deleted = false WHERE id = $1', [userId]);
+    const result = await db.query('UPDATE public.users SET is_deleted = false WHERE id = $1 AND tenant_id = $2 RETURNING id', [userId, tenantId]);
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: "Employee not found." });
+
     res.json({ success: true, message: "Employee restored successfully!" });
   } catch (err) {
     console.error("Restore Error:", err.message);
@@ -190,13 +223,23 @@ router.put('/:id/restore', async (req, res) => {
   }
 });
 
-// 6. DELETE: PERMANENTLY DESTROY
+// 6. DELETE: PERMANENTLY DESTROY (Locked to Tenant)
 router.delete('/:id/permanent', async (req, res) => {
   const userId = req.params.id;
+  const tenantId = req.headers['x-tenant-id']; 
+
+  if (!tenantId) return res.status(400).json({ success: false, error: "Tenant ID required." });
+
   try {
     await db.query('BEGIN');
-    await db.query('DELETE FROM public.employee_details WHERE user_id = $1', [userId]);
-    await db.query('DELETE FROM public.users WHERE id = $1', [userId]);
+    await db.query('DELETE FROM public.employee_details WHERE user_id = $1 AND tenant_id = $2', [userId, tenantId]);
+    const result = await db.query('DELETE FROM public.users WHERE id = $1 AND tenant_id = $2 RETURNING id', [userId, tenantId]);
+    
+    if (result.rowCount === 0) {
+        await db.query('ROLLBACK');
+        return res.status(404).json({ success: false, error: "Employee not found or access denied." });
+    }
+
     await db.query('COMMIT');
     res.json({ success: true, message: "Employee permanently deleted." });
   } catch (err) {

@@ -79,7 +79,15 @@ router.post('/', async (req, res) => {
     const dueDateObj = new Date();
     dueDateObj.setDate(today.getDate() + termsDays);
     
-    const pdfFileName = `Invoice_TS_${timesheet_id}_${uniquePin}.pdf`;
+    // 🔥 UPDATED: Descriptive Naming Logic (employee_month_year_client_invoice.pdf)
+    const invoiceDate = new Date(data.period_start);
+    const monthName = invoiceDate.toLocaleString('en-US', { month: 'long' }).toLowerCase();
+    const year = invoiceDate.getFullYear();
+    
+    const cleanEmployeeName = `${data.first_name}_${data.last_name}`.replace(/\s+/g, '_').toLowerCase();
+    const cleanClientName = data.client_name.replace(/\s+/g, '_').toLowerCase();
+
+    const pdfFileName = `${cleanEmployeeName}_${monthName}_${year}_${cleanClientName}_invoice.pdf`;
 
     const pdfBuffer = await generateInvoiceBuffer({
         companyName: data.domain_prefix === 'gandiva' ? 'Gandiva Insights' : 'Leo Does IT Inc.',
@@ -174,7 +182,7 @@ router.put('/:id/void', async (req, res) => {
   }
 });
 
-// 5. POST ROUTE: Trigger the Mailer Utility (🔥 UPDATED TO GENERATE SIGNED URL FOR NODEMAILER)
+// 5. POST ROUTE: Trigger the Mailer Utility
 router.post('/:id/send', async (req, res) => {
   const invoiceId = req.params.id;
   try {
@@ -275,7 +283,6 @@ router.get('/:id/download', async (req, res) => {
         }
 
         // 🔥 STRIP OFF OLD URL IF NEEDED: 
-        // Ensures AWS signs "invoices/filename.pdf" instead of "https://..."
         if (fileKey.startsWith('http')) {
             const splitParts = fileKey.split('.amazonaws.com/');
             if (splitParts.length > 1) {
