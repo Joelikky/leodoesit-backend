@@ -255,4 +255,79 @@ router.delete('/:id/permanent', async (req, res) => {
   }
 });
 
+// ============================================================================
+// 7. 🔐 PASSWORD MANAGEMENT ROUTES
+// ============================================================================
+
+// POST: Employee Self-Service Password Change (Portal)
+router.post('/change-password', async (req, res) => {
+  const { userId, oldPassword, newPassword } = req.body;
+
+  if (!userId || !oldPassword || !newPassword) {
+    return res.status(400).json({ success: false, error: "Missing required fields." });
+  }
+
+  try {
+    // A. Verify the user exists and grab their current password
+    const userQuery = await db.query(`SELECT password FROM public.users WHERE id = $1`, [userId]);
+    
+    if (userQuery.rows.length === 0) {
+      return res.status(404).json({ success: false, error: "User not found." });
+    }
+
+    const currentPassword = userQuery.rows[0].password;
+
+    // B. Verify the old password matches exactly
+    if (currentPassword !== oldPassword) {
+      return res.status(401).json({ success: false, error: "Incorrect current password." });
+    }
+
+    // C. Update the database with the new password
+    // NOTE: For production, remember to wrap newPassword in a bcrypt hash here!
+    await db.query(
+      `UPDATE public.users SET password = $1 WHERE id = $2`,
+      [newPassword, userId]
+    );
+
+    res.json({ success: true, message: "Password updated successfully." });
+
+  } catch (error) {
+    console.error("Error changing password:", error);
+    res.status(500).json({ success: false, error: "Internal server error." });
+  }
+});
+
+// PUT: Admin Force Password Reset (Admin Dashboard)
+router.put('/:id/password', async (req, res) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+  const tenantId = req.headers['x-tenant-id'];
+
+  if (!newPassword) {
+    return res.status(400).json({ success: false, error: "New password is required." });
+  }
+
+  try {
+    // SECURITY: Ensure the Admin isn't changing a password for a different company
+    const userCheck = await db.query(`SELECT id FROM public.users WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
+    
+    if (userCheck.rows.length === 0) {
+      return res.status(403).json({ success: false, error: "Access Denied: User does not exist or belongs to another tenant." });
+    }
+
+    // Update the password in the database
+    // NOTE: For production, remember to wrap newPassword in a bcrypt hash here!
+    await db.query(
+      `UPDATE public.users SET password = $1 WHERE id = $2`,
+      [newPassword, id]
+    );
+
+    res.json({ success: true, message: "Employee password reset successfully." });
+
+  } catch (error) {
+    console.error("Error resetting password:", error);
+    res.status(500).json({ success: false, error: "Internal server error." });
+  }
+});
+
 module.exports = router;
