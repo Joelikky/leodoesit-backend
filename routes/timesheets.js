@@ -4,8 +4,8 @@ const db = require('../db');
 const multer = require('multer');
 const path = require('path');
 
-// 🔥 IMPORTED THE NEW APPROVAL EMAIL
-const { sendRejectionEmail, sendTimesheetSubmissionEmail, sendTimesheetApprovalEmail } = require('../utils/mailer');
+// 🔥 IMPORTED EMAILS INCLUDING THE REMINDER
+const { sendRejectionEmail, sendTimesheetSubmissionEmail, sendTimesheetApprovalEmail, sendTimesheetReminder } = require('../utils/mailer');
 
 // Import our S3 tools
 const { uploadTimesheetToS3, generateSignedUrl } = require('../utils/s3Service');
@@ -21,7 +21,7 @@ router.get('/', async (req, res) => {
 
   try {
     let query = `
-      SELECT t.id, t.period_start, t.period_end, t.total_hours, t.status, t.screenshot_urls,
+      SELECT t.id, t.period_start, t.period_end, t.total_hours, t.status, t.screenshot_urls, t.user_id,
              u.first_name, u.last_name, u.tenant_id, e.pay_rate, e.invoice_rate, e.vendor_name
       FROM timesheets t
       JOIN users u ON t.user_id = u.id
@@ -155,7 +155,6 @@ router.put('/:id/approve', async (req, res) => {
     
     const timesheet = result.rows[0];
 
-    // 🔥 NEW: Fetch user details and send the Approval Email
     const userQuery = await db.query(`
         SELECT u.first_name, u.last_name, u.email, ten.domain_prefix 
         FROM users u
@@ -230,6 +229,74 @@ router.put('/:id/void', async (req, res) => {
     console.error(err.message);
     res.status(500).json({ success: false, error: "Failed to void timesheet." });
   }
+});
+
+// 🔥 NEW: 7. Master Status Updater (Used by the Admin Timesheets Page)
+router.put('/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status, admin_notes } = req.body;
+  const tenant_id = req.headers['x-tenant-id'];
+
+  try {
+    const result = await db.query(
+      `UPDATE timesheets 
+       SET status = $1, rejection_reason = $2, updated_at = NOW() 
+       WHERE id = $3 AND tenant_id = $4 RETURNING *`,
+      [status, admin_notes, id, tenant_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Timesheet not found' });
+    }
+
+    const timesheet = result.rows[0];
+
+    // Trigger emails based on the status change
+    const userQuery = await db.query(`
+        SELECT u.first_name, u.last_name, u.email, ten.domain_prefix 
+        FROM users u
+        JOIN tenants ten ON u.tenant_id = ten.id
+        WHERE u.id = $1
+    `, [timesheet.user_id]);
+
+    if (userQuery.rowCount > 0) {
+        const user = userQuery.rows[0];
+        const contractorName = `${user.first_name} ${user.last_name}`;
+        const startDate = new Date(timesheet.period_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const endDate = new Date(timesheet.period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const billingPeriod = `${startDate} - ${endDate}`;
+
+        if (status === 'APPROVED') {
+            sendTimesheetApprovalEmail(user.domain_prefix, user.email, contractorName, billingPeriod, timesheet.total_hours)
+                .catch(err => console.error("Background approval email error:", err));
+        } else if (status === 'REJECTED') {
+            sendRejectionEmail(user.domain_prefix, user.email, contractorName, billingPeriod, admin_notes)
+                .catch(err => console.error("Background rejection email error:", err));
+        }
+    }
+
+    res.json({ success: true, data: timesheet });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 🔥 NEW: 8. Manual Reminder Trigger (Used by the "Remind" button)
+router.post('/remind', async (req, res) => {
+    const { email, first_name, month } = req.body;
+    const tenant_id = req.headers['x-tenant-id'];
+
+    try {
+        const tenantResult = await db.query('SELECT domain_prefix FROM tenants WHERE id = $1', [tenant_id]);
+        const domainPrefix = tenantResult.rows.length > 0 ? tenantResult.rows[0].domain_prefix : 'leodoesit';
+
+        await sendTimesheetReminder(domainPrefix, email, first_name, month);
+        
+        res.json({ success: true, message: 'Manual reminder sent!' });
+    } catch (err) {
+        console.error('Error sending manual timesheet reminder:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
 });
 
 module.exports = router;
