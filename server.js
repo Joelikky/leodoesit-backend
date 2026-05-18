@@ -12,8 +12,8 @@ const app = express();
 // 🔥 CHANGED: Secure CORS Policy for Production
 app.use(cors({
   origin: [
-    'http://localhost:5173',          // Your local Vite React server
-    process.env.FRONTEND_URL          // Your future live domain (Render/Vercel)
+    'http://localhost:5173',                  // Your local Vite React server
+    'https://leodoesit-frontend.vercel.app'   // 🔥 YOUR EXACT VERCEL URL
   ],
   credentials: true
 }));
