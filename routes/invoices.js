@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// 🔥 IMPORTED generateSignedUrl from s3Service
+// IMPORTED generateSignedUrl from s3Service
 const { generateInvoiceBuffer } = require('../utils/pdfGenerator');
 const { uploadInvoiceToS3, generateSignedUrl } = require('../utils/s3Service');
 const { sendInvoiceEmail, sendBalanceReminderEmail } = require('../utils/mailer');
@@ -32,7 +32,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 2. POST ROUTE: Generate a new invoice & PDF (S3 UPLOAD)
+// 2. POST ROUTE: Generate a new invoice & PDF (FIXED: Populates amount_invoiced)
 router.post('/', async (req, res) => {
   const { client_id, timesheet_id, tenant_id } = req.body;
 
@@ -58,6 +58,7 @@ router.post('/', async (req, res) => {
 
     const hours = parseFloat(data.total_hours);
     const rate = parseFloat(data.invoice_rate); 
+    const finalAmountInvoiced = hours * rate; // Calculated invoice total
 
     const dateObj = new Date(data.period_start); 
     const yy = dateObj.getFullYear().toString().slice(-2); 
@@ -79,7 +80,6 @@ router.post('/', async (req, res) => {
     const dueDateObj = new Date();
     dueDateObj.setDate(today.getDate() + termsDays);
     
-    // 🔥 UPDATED: Descriptive Naming Logic (employee_month_year_client_invoice.pdf)
     const invoiceDate = new Date(data.period_start);
     const monthName = invoiceDate.toLocaleString('en-US', { month: 'long' }).toLowerCase();
     const year = invoiceDate.getFullYear();
@@ -104,12 +104,13 @@ router.post('/', async (req, res) => {
         return res.status(500).json({ success: false, error: "Failed to upload PDF to AWS S3." });
     }
 
+    // FIXED: Formatted to include amount_invoiced column parameters
     const insertQuery = `
-    INSERT INTO invoices (client_id, timesheet_id, invoice_number, hours_billed, hourly_rate_applied, status, due_date, amount_paid, file_url)
-    VALUES ($1, $2, $3, $4, $5, 'UNPAID', CURRENT_DATE + INTERVAL '${termsDays} days', 0, $6)
+    INSERT INTO invoices (client_id, timesheet_id, invoice_number, hours_billed, hourly_rate_applied, amount_invoiced, status, due_date, amount_paid, file_url)
+    VALUES ($1, $2, $3, $4, $5, $6, 'UNPAID', CURRENT_DATE + INTERVAL '${termsDays} days', 0, $7)
     RETURNING *;
     `;
-    const insertResult = await db.query(insertQuery, [client_id, timesheet_id, invoiceNumber, hours, rate, s3Url]);
+    const insertResult = await db.query(insertQuery, [client_id, timesheet_id, invoiceNumber, hours, rate, finalAmountInvoiced, s3Url]);
     await db.query(`UPDATE timesheets SET status = 'INVOICED' WHERE id = $1;`, [timesheet_id]);
 
     res.status(201).json({ success: true, message: "Invoice saved and uploaded!", data: insertResult.rows[0] });
@@ -205,7 +206,6 @@ router.post('/:id/send', async (req, res) => {
       }
 
       let fileKey = data.file_url;
-      // Strip out the old HTTP url if it exists so AWS can sign it properly
       if (fileKey && fileKey.startsWith('http')) {
           const splitParts = fileKey.split('.amazonaws.com/');
           if (splitParts.length > 1) {
@@ -213,7 +213,6 @@ router.post('/:id/send', async (req, res) => {
           }
       }
 
-      // Generate a temporary URL so Nodemailer can safely download it to attach to the email
       const secureUrlForEmail = await generateSignedUrl(fileKey);
       const monthYear = new Date(data.period_start).toLocaleString('en-US', { month: 'long', year: 'numeric' });
       
@@ -282,7 +281,6 @@ router.get('/:id/download', async (req, res) => {
             return res.status(404).send("Invoice file not found.");
         }
 
-        // 🔥 STRIP OFF OLD URL IF NEEDED: 
         if (fileKey.startsWith('http')) {
             const splitParts = fileKey.split('.amazonaws.com/');
             if (splitParts.length > 1) {
@@ -290,14 +288,12 @@ router.get('/:id/download', async (req, res) => {
             }
         }
 
-        // Ask AWS for a temporary 15-minute VIP pass using the file key
         const secureUrl = await generateSignedUrl(fileKey);
 
         if (!secureUrl) {
             return res.status(500).send("Server error generating secure link.");
         }
 
-        // Instantly redirect the user's browser to the secure AWS link
         res.redirect(secureUrl);
 
     } catch (error) {
