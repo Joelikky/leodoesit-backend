@@ -4,7 +4,7 @@ const db = require('../db');
 const multer = require('multer');
 const path = require('path');
 
-// 🔥 IMPORTED EMAILS INCLUDING THE REMINDER
+// IMPORTED EMAILS INCLUDING THE REMINDER
 const { sendRejectionEmail, sendTimesheetSubmissionEmail, sendTimesheetApprovalEmail, sendTimesheetReminder } = require('../utils/mailer');
 
 // Import our S3 tools
@@ -231,7 +231,7 @@ router.put('/:id/void', async (req, res) => {
   }
 });
 
-// 🔥 NEW: 7. Master Status Updater (Used by the Admin Timesheets Page)
+// 7. Master Status Updater (FIXED: Checks tenant boundary via the sub-joined Users lookup)
 router.put('/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status, admin_notes } = req.body;
@@ -241,12 +241,13 @@ router.put('/:id/status', async (req, res) => {
     const result = await db.query(
       `UPDATE timesheets 
        SET status = $1, rejection_reason = $2, updated_at = NOW() 
-       WHERE id = $3 AND tenant_id = $4 RETURNING *`,
+       WHERE id = $3 AND user_id IN (SELECT id FROM users WHERE tenant_id = $4) 
+       RETURNING *`,
       [status, admin_notes, id, tenant_id]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Timesheet not found' });
+      return res.status(404).json({ success: false, error: 'Timesheet not found or unauthorized' });
     }
 
     const timesheet = result.rows[0];
@@ -281,7 +282,7 @@ router.put('/:id/status', async (req, res) => {
   }
 });
 
-// 🔥 NEW: 8. Manual Reminder Trigger (Used by the "Remind" button)
+// 8. Manual Reminder Trigger (Used by the "Remind" button)
 router.post('/remind', async (req, res) => {
     const { email, first_name, month } = req.body;
     const tenant_id = req.headers['x-tenant-id'];
