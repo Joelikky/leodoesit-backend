@@ -4,8 +4,8 @@ const db = require('../db');
 const multer = require('multer');
 const path = require('path');
 
-// 🔥 IMPORTED THE NEW APPROVAL EMAIL
-const { sendRejectionEmail, sendTimesheetSubmissionEmail, sendTimesheetApprovalEmail } = require('../utils/mailer');
+// IMPORTED EMAILS INCLUDING THE REMINDER
+const { sendRejectionEmail, sendTimesheetSubmissionEmail, sendTimesheetApprovalEmail, sendTimesheetReminder } = require('../utils/mailer');
 
 // Import our S3 tools
 const { uploadTimesheetToS3, generateSignedUrl } = require('../utils/s3Service');
@@ -21,7 +21,7 @@ router.get('/', async (req, res) => {
 
   try {
     let query = `
-      SELECT t.id, t.period_start, t.period_end, t.total_hours, t.status, t.screenshot_urls,
+      SELECT t.id, t.period_start, t.period_end, t.total_hours, t.status, t.screenshot_urls, t.user_id,
              u.first_name, u.last_name, u.tenant_id, e.pay_rate, e.invoice_rate, e.vendor_name
       FROM timesheets t
       JOIN users u ON t.user_id = u.id
@@ -133,12 +133,8 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
         const isGandiva = user.domain_prefix === 'gandiva';
         const adminEmail = isGandiva ? process.env.GANDIVA_EMAIL : (process.env.ADMIN_NOTIFY_EMAIL || process.env.EMAIL_USER);
 
-        console.log(`✉️ Sending Submission Email to: ${user.email}`);
-        // 🔥 FIX: Added 'await' to ensure the email finishes sending before the server closes the request
-        const emailSent = await sendTimesheetSubmissionEmail(user.domain_prefix, user.email, adminEmail, contractorName, billingPeriod, total_hours);
-        
-        if (emailSent) console.log("✅ Submission Email Sent successfully.");
-        else console.log("❌ Failed to send Submission Email.");
+        sendTimesheetSubmissionEmail(user.domain_prefix, user.email, adminEmail, contractorName, billingPeriod, total_hours)
+            .catch(err => console.error("Background email error:", err));
     }
 
     res.status(201).json({ success: true, data: result.rows[0] });
@@ -159,7 +155,6 @@ router.put('/:id/approve', async (req, res) => {
     
     const timesheet = result.rows[0];
 
-    // Fetch user details and send the Approval Email
     const userQuery = await db.query(`
         SELECT u.first_name, u.last_name, u.email, ten.domain_prefix 
         FROM users u
@@ -174,12 +169,8 @@ router.put('/:id/approve', async (req, res) => {
         const endDate = new Date(timesheet.period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         const billingPeriod = `${startDate} - ${endDate}`;
 
-        console.log(`✉️ Sending Approval Email to: ${user.email}`);
-        // 🔥 FIX: Added 'await' so the process doesn't get killed before the email sends
-        const emailSent = await sendTimesheetApprovalEmail(user.domain_prefix, user.email, contractorName, billingPeriod, timesheet.total_hours);
-        
-        if (emailSent) console.log("✅ Approval Email Sent successfully.");
-        else console.log("❌ Failed to send Approval Email.");
+        sendTimesheetApprovalEmail(user.domain_prefix, user.email, contractorName, billingPeriod, timesheet.total_hours)
+            .catch(err => console.error("Background approval email error:", err));
     }
 
     res.json({ success: true, message: "Timesheet officially approved!", data: timesheet });
@@ -215,8 +206,6 @@ router.put('/:id/reject', async (req, res) => {
     const billingPeriod = `${new Date(timesheet.period_start).toLocaleDateString()} - ${new Date(timesheet.period_end).toLocaleDateString()}`;
     const contractorName = `${user.first_name} ${user.last_name}`;
     
-    console.log(`✉️ Sending Rejection Email to: ${user.email}`);
-    // This one was already awaited properly, which is likely why Rejection emails worked!
     await sendRejectionEmail(user.domain_prefix, user.email, contractorName, billingPeriod, rejection_reason);
 
     res.json({ success: true, message: "Timesheet rejected and email sent!", data: timesheet });
@@ -240,6 +229,75 @@ router.put('/:id/void', async (req, res) => {
     console.error(err.message);
     res.status(500).json({ success: false, error: "Failed to void timesheet." });
   }
+});
+
+// 7. Master Status Updater (FIXED: Checks tenant boundary via the sub-joined Users lookup)
+router.put('/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status, admin_notes } = req.body;
+  const tenant_id = req.headers['x-tenant-id'];
+
+  try {
+    const result = await db.query(
+      `UPDATE timesheets 
+       SET status = $1, rejection_reason = $2, updated_at = NOW() 
+       WHERE id = $3 AND user_id IN (SELECT id FROM users WHERE tenant_id = $4) 
+       RETURNING *`,
+      [status, admin_notes, id, tenant_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Timesheet not found or unauthorized' });
+    }
+
+    const timesheet = result.rows[0];
+
+    // Trigger emails based on the status change
+    const userQuery = await db.query(`
+        SELECT u.first_name, u.last_name, u.email, ten.domain_prefix 
+        FROM users u
+        JOIN tenants ten ON u.tenant_id = ten.id
+        WHERE u.id = $1
+    `, [timesheet.user_id]);
+
+    if (userQuery.rowCount > 0) {
+        const user = userQuery.rows[0];
+        const contractorName = `${user.first_name} ${user.last_name}`;
+        const startDate = new Date(timesheet.period_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const endDate = new Date(timesheet.period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const billingPeriod = `${startDate} - ${endDate}`;
+
+        if (status === 'APPROVED') {
+            sendTimesheetApprovalEmail(user.domain_prefix, user.email, contractorName, billingPeriod, timesheet.total_hours)
+                .catch(err => console.error("Background approval email error:", err));
+        } else if (status === 'REJECTED') {
+            sendRejectionEmail(user.domain_prefix, user.email, contractorName, billingPeriod, admin_notes)
+                .catch(err => console.error("Background rejection email error:", err));
+        }
+    }
+
+    res.json({ success: true, data: timesheet });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8. Manual Reminder Trigger (Used by the "Remind" button)
+router.post('/remind', async (req, res) => {
+    const { email, first_name, month } = req.body;
+    const tenant_id = req.headers['x-tenant-id'];
+
+    try {
+        const tenantResult = await db.query('SELECT domain_prefix FROM tenants WHERE id = $1', [tenant_id]);
+        const domainPrefix = tenantResult.rows.length > 0 ? tenantResult.rows[0].domain_prefix : 'leodoesit';
+
+        await sendTimesheetReminder(domainPrefix, email, first_name, month);
+        
+        res.json({ success: true, message: 'Manual reminder sent!' });
+    } catch (err) {
+        console.error('Error sending manual timesheet reminder:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
 });
 
 module.exports = router;
