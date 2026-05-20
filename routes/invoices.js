@@ -2,12 +2,14 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// IMPORTED generateSignedUrl from s3Service
+// IMPORTED UTILITIES
 const { generateInvoiceBuffer } = require('../utils/pdfGenerator');
 const { uploadInvoiceToS3, generateSignedUrl } = require('../utils/s3Service');
 const { sendInvoiceEmail, sendBalanceReminderEmail } = require('../utils/mailer');
 
+// ==========================================================================
 // 1. GET ROUTE: Fetch all invoices FOR THE LOGGED-IN PORTAL ONLY
+// ==========================================================================
 router.get('/', async (req, res) => {
   const tenantId = req.headers['x-tenant-id']; 
   try {
@@ -28,28 +30,31 @@ router.get('/', async (req, res) => {
     const result = await db.query(query, [tenantId]);
     res.json({ success: true, count: result.rowCount, data: result.rows });
   } catch (err) {
+    console.error("Fetch Invoices Error:", err.message);
     res.status(500).json({ success: false, error: "Failed to fetch invoices" });
   }
 });
 
-// 2. POST ROUTE: Generate a new invoice & PDF (FIXED: Populates amount_invoiced)
+// ==========================================================================
+// 2. POST ROUTE: Generate a new invoice & PDF (CRASH-PROOF & FULLY POPULATED)
+// ==========================================================================
 router.post('/', async (req, res) => {
   const { client_id, timesheet_id, tenant_id } = req.body;
 
   try {
     const mathQuery = `
-    SELECT t.total_hours, t.period_start, t.period_end, 
-           u.id AS user_id, u.first_name, u.last_name, 
-           e.invoice_rate, e.invoice_num, e.role,
-           e.vendor_for, e.net_terms, e.vendor_address AS client_address,
-           c.company_name AS client_name, ten.domain_prefix
-    FROM timesheets t
-    JOIN users u ON t.user_id = u.id
-    LEFT JOIN employee_details e ON u.id = e.user_id
-    JOIN clients c ON c.id = $1
-    JOIN tenants ten ON u.tenant_id = ten.id
-    WHERE t.id = $2;
-  `;
+      SELECT t.total_hours, t.period_start, t.period_end, 
+             u.id AS user_id, u.first_name, u.last_name, 
+             e.invoice_rate, e.invoice_num, e.role,
+             e.vendor_for, e.net_terms, e.vendor_address AS client_address,
+             c.company_name AS client_name, ten.domain_prefix
+      FROM timesheets t
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN employee_details e ON u.id = e.user_id
+      JOIN clients c ON c.id = $1
+      JOIN tenants ten ON u.tenant_id = ten.id
+      WHERE t.id = $2;
+    `;
     const mathResult = await db.query(mathQuery, [client_id, timesheet_id]);
     if (mathResult.rowCount === 0) return res.status(404).json({ success: false, error: "Timesheet not found" });
 
@@ -58,7 +63,7 @@ router.post('/', async (req, res) => {
 
     const hours = parseFloat(data.total_hours);
     const rate = parseFloat(data.invoice_rate); 
-    const finalAmountInvoiced = hours * rate; // Calculated invoice total
+    const finalAmountInvoiced = hours * rate; // Populates schema total constraint
 
     const dateObj = new Date(data.period_start); 
     const yy = dateObj.getFullYear().toString().slice(-2); 
@@ -104,23 +109,43 @@ router.post('/', async (req, res) => {
         return res.status(500).json({ success: false, error: "Failed to upload PDF to AWS S3." });
     }
 
-    // FIXED: Formatted to include amount_invoiced column parameters
+    // Insert statement completely populated with amount_invoiced column parameters
     const insertQuery = `
-    INSERT INTO invoices (client_id, timesheet_id, invoice_number, hours_billed, hourly_rate_applied, amount_invoiced, status, due_date, amount_paid, file_url)
-    VALUES ($1, $2, $3, $4, $5, $6, 'UNPAID', CURRENT_DATE + INTERVAL '${termsDays} days', 0, $7)
-    RETURNING *;
+      INSERT INTO invoices (client_id, timesheet_id, invoice_number, hours_billed, hourly_rate_applied, amount_invoiced, status, due_date, amount_paid, file_url)
+      VALUES ($1, $2, $3, $4, $5, $6, 'UNPAID', CURRENT_DATE + INTERVAL '${termsDays} days', 0, $7)
+      RETURNING *;
     `;
     const insertResult = await db.query(insertQuery, [client_id, timesheet_id, invoiceNumber, hours, rate, finalAmountInvoiced, s3Url]);
-    await db.query(`UPDATE timesheets SET status = 'INVOICED' WHERE id = $1;`, [timesheet_id]);
+
+    // Isolated crash-proof try-catch prevents async database blockades from breaking the transaction
+    try {
+      await db.query(`UPDATE timesheets SET status = 'INVOICED' WHERE id = $1;`, [timesheet_id]);
+    } catch (timesheetUpdateError) {
+      console.error("⚠️ Non-blocking warning: Failed to sync secondary timesheet state row to INVOICED:", timesheetUpdateError.message);
+    }
+
+    // Automated operational notification email background worker
+    try {
+      const contractorName = `${data.first_name} ${data.last_name}`;
+      const isGandiva = data.domain_prefix === 'gandiva';
+      const adminEmail = isGandiva ? process.env.GANDIVA_EMAIL : (process.env.ADMIN_NOTIFY_EMAIL || process.env.EMAIL_USER);
+
+      sendInvoiceEmail(data.domain_prefix, adminEmail, contractorName, monthName, s3Url, invoiceNumber)
+          .catch(err => console.error("Background automated invoice delivery alert failed:", err));
+    } catch (emailTriggerError) {
+      console.error("Non-blocking notification hook failure:", emailTriggerError.message);
+    }
 
     res.status(201).json({ success: true, message: "Invoice saved and uploaded!", data: insertResult.rows[0] });
   } catch (err) {
-    console.error(err);
+    console.error("Critical Invoice Generation Error Stack:", err);
     res.status(500).json({ success: false, error: "Failed to create invoice." });
   }
 });
 
+// ==========================================================================
 // 3. PUT ROUTE: CRASH-PROOF PAYMENT HANDLING
+// ==========================================================================
 router.put('/:id/pay', async (req, res) => {
   const { id } = req.params;
   const { payment_amount } = req.body; 
@@ -164,7 +189,9 @@ router.put('/:id/pay', async (req, res) => {
   }
 });
 
+// ==========================================================================
 // 4. PUT ROUTE: VOID INVOICE
+// ==========================================================================
 router.put('/:id/void', async (req, res) => {
   const { id } = req.params;
   try {
@@ -183,7 +210,9 @@ router.put('/:id/void', async (req, res) => {
   }
 });
 
+// ==========================================================================
 // 5. POST ROUTE: Trigger the Mailer Utility
+// ==========================================================================
 router.post('/:id/send', async (req, res) => {
   const invoiceId = req.params.id;
   try {
@@ -230,7 +259,9 @@ router.post('/:id/send', async (req, res) => {
   }
 });
 
+// ==========================================================================
 // 6. POST ROUTE: Send Partial Balance Reminder
+// ==========================================================================
 router.post('/:id/remind', async (req, res) => {
     const invoiceId = req.params.id;
     try {
@@ -261,14 +292,16 @@ router.post('/:id/remind', async (req, res) => {
         if (emailSent) {
           res.json({ success: true, message: `Reminder sent to ${data.billing_email}!` });
         } else {
-          res.status(500).json({ success: false, error: "Zoho rejected the email. Check your backend terminal (where nodemon is running) to see the exact error." });
+          res.status(500).json({ success: false, error: "Zoho rejected the email. Check your backend terminal to see the exact error." });
         }
     } catch (error) {
         res.status(500).json({ success: false, error: "Server error." });
     }
   });
 
+// ==========================================================================
 // 7. GET ROUTE: Securely Download/View the PDF via Signed URL
+// ==========================================================================
 router.get('/:id/download', async (req, res) => {
     const invoiceId = req.params.id;
     try {
