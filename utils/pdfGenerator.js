@@ -1,5 +1,10 @@
-const puppeteer = require('puppeteer');
+// Replace your existing puppeteer.launch() with this:
+const puppeteer = require('puppeteer-core'); 
 
+const browser = await puppeteer.launch({
+    executablePath: '/usr/bin/chromium', // This is the path on Render
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+});
 /**
  * Generates an Invoice PDF and returns it as a Memory Buffer
  * @param {Object} data - The invoice data
