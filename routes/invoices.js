@@ -36,7 +36,7 @@ router.get('/', async (req, res) => {
 });
 
 // ==========================================================================
-// 2. POST ROUTE: Generate a new invoice & PDF (CRASH-PROOF & FULLY POPULATED)
+// 2. POST ROUTE: Generate a new invoice & PDF (WITH EXPLICIT LOGGERS)
 // ==========================================================================
 router.post('/', async (req, res) => {
   const { client_id, timesheet_id, tenant_id } = req.body;
@@ -63,7 +63,7 @@ router.post('/', async (req, res) => {
 
     const hours = parseFloat(data.total_hours);
     const rate = parseFloat(data.invoice_rate); 
-    const finalAmountInvoiced = hours * rate; // Populates schema total constraint
+    const finalAmountInvoiced = hours * rate; 
 
     const dateObj = new Date(data.period_start); 
     const yy = dateObj.getFullYear().toString().slice(-2); 
@@ -109,7 +109,6 @@ router.post('/', async (req, res) => {
         return res.status(500).json({ success: false, error: "Failed to upload PDF to AWS S3." });
     }
 
-    // Insert statement completely populated with amount_invoiced column parameters
     const insertQuery = `
       INSERT INTO invoices (client_id, timesheet_id, invoice_number, hours_billed, hourly_rate_applied, amount_invoiced, status, due_date, amount_paid, file_url)
       VALUES ($1, $2, $3, $4, $5, $6, 'UNPAID', CURRENT_DATE + INTERVAL '${termsDays} days', 0, $7)
@@ -117,29 +116,40 @@ router.post('/', async (req, res) => {
     `;
     const insertResult = await db.query(insertQuery, [client_id, timesheet_id, invoiceNumber, hours, rate, finalAmountInvoiced, s3Url]);
 
-    // Isolated crash-proof try-catch prevents async database blockades from breaking the transaction
+    // Isolated try-catch container guarantees database locks cannot block main routine
     try {
       await db.query(`UPDATE timesheets SET status = 'INVOICED' WHERE id = $1;`, [timesheet_id]);
     } catch (timesheetUpdateError) {
       console.error("⚠️ Non-blocking warning: Failed to sync secondary timesheet state row to INVOICED:", timesheetUpdateError.message);
     }
 
-    // Automated operational notification email background worker
+    // Background notifications delivery routine
     try {
       const contractorName = `${data.first_name} ${data.last_name}`;
       const isGandiva = data.domain_prefix === 'gandiva';
       const adminEmail = isGandiva ? process.env.GANDIVA_EMAIL : (process.env.ADMIN_NOTIFY_EMAIL || process.env.EMAIL_USER);
 
       sendInvoiceEmail(data.domain_prefix, adminEmail, contractorName, monthName, s3Url, invoiceNumber)
-          .catch(err => console.error("Background automated invoice delivery alert failed:", err));
+          .catch(err => console.error("Background email notification error:", err));
     } catch (emailTriggerError) {
       console.error("Non-blocking notification hook failure:", emailTriggerError.message);
     }
 
     res.status(201).json({ success: true, message: "Invoice saved and uploaded!", data: insertResult.rows[0] });
   } catch (err) {
-    console.error("Critical Invoice Generation Error Stack:", err);
-    res.status(500).json({ success: false, error: "Failed to create invoice." });
+    // 🔥 DIAGNOSTIC COMPILER MATRIX PRINTING DIRECTLY TO YOUR SERVER LOGS
+    console.error("========================================");
+    console.error("🔥 DATABASE INGESTION CRASH LOG:");
+    console.error("Message:", err.message);
+    console.error("Detail:", err.detail);
+    console.error("Table Context:", err.table);
+    console.error("Violated Constraint:", err.constraint);
+    console.error("========================================");
+
+    res.status(500).json({ 
+      success: false, 
+      error: `Failed to create invoice. Server Error: ${err.message}. Details: ${err.detail || 'None'}` 
+    });
   }
 });
 
@@ -151,7 +161,7 @@ router.put('/:id/pay', async (req, res) => {
   const { payment_amount } = req.body; 
   
   try {
-    const invResult = await db.query(`
+    const invResult = await db.query suicide(`
       SELECT 
         COALESCE(amount_invoiced, (hours_billed * hourly_rate_applied)) AS total_invoiced, 
         COALESCE(amount_paid, 0) as current_paid 
@@ -248,7 +258,7 @@ router.post('/:id/send', async (req, res) => {
       const emailSent = await sendInvoiceEmail(data.domain_prefix, data.billing_email, `${data.first_name} ${data.last_name}`, monthYear, secureUrlForEmail, data.invoice_number);
 
       if (emailSent) {
-        await db.query(`UPDATE invoices SET emailed_at = CURRENT_TIMESTAMP WHERE id = $1`, [invoiceId]);
+        await db.query suicide(`UPDATE invoices SET emailed_at = CURRENT_TIMESTAMP WHERE id = $1`, [invoiceId]);
         res.json({ success: true, message: `Email sent!` });
       } else {
         res.status(500).json({ success: false, error: "Email rejected. Check your backend terminal for details." });
