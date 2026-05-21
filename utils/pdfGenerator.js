@@ -1,4 +1,5 @@
-const puppeteer = require('puppeteer-core'); 
+// ✅ CHANGED: Switched from 'puppeteer-core' to standard 'puppeteer'
+const puppeteer = require('puppeteer'); 
 
 /**
  * Generates an Invoice PDF and returns it as a Memory Buffer
@@ -244,9 +245,8 @@ const generateInvoiceBuffer = async (data) => {
     }
 
     // 3. Generate the PDF Document in Memory
-    // ✅ FIX: Placed the Render-specific launch configuration here
+    // ✅ CHANGED: Removed the strict executablePath to allow Puppeteer to use its own downloaded Chromium
     const browser = await puppeteer.launch({ 
-        executablePath: '/usr/bin/chromium', 
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
         headless: "new"
     });
