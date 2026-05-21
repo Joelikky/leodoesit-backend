@@ -3,16 +3,22 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "type": "commonjs",
+
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "postinstall": "npx puppeteer browsers install chrome"
   },
+
   "keywords": [],
   "author": "",
   "license": "ISC",
+
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1033.0",
     "@aws-sdk/s3-request-presigner": "^3.1034.0",
+    "@sparticuz/chromium": "^123.0.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
@@ -21,8 +27,9 @@
     "nodemailer": "^8.0.4",
     "pdfkit": "^0.18.0",
     "pg": "^8.20.0",
-    "puppeteer": "^24.43.1"
+    "puppeteer-core": "^22.6.5"
   },
+
   "devDependencies": {
     "nodemon": "^3.1.14"
   }
