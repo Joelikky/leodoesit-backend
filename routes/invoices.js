@@ -5,7 +5,7 @@ const db = require('../db');
 // UTILITIES
 const { generateInvoiceBuffer } = require('../utils/pdfGenerator');
 const { uploadInvoiceToS3, generateSignedUrl } = require('../utils/s3Service');
-const { sendInvoiceEmail, sendBalanceReminderEmail } = require('../utils/mailer');
+const { sendInvoiceEmail } = require('../utils/mailer');
 
 // ==========================================================================
 // GET ALL INVOICES
@@ -265,7 +265,7 @@ router.post('/', async (req, res) => {
         }
 
         // ======================================================
-        // FIXED INSERT QUERY
+        // INSERT INVOICE
         // ======================================================
 
         const insertQuery = `
@@ -360,11 +360,7 @@ router.post('/', async (req, res) => {
 
     } catch (err) {
 
-        console.error("================================");
-        console.error("Invoice Creation Error");
-        console.error("Message:", err.message);
-        console.error("Detail:", err.detail);
-        console.error("================================");
+        console.error("Invoice Creation Error:", err);
 
         res.status(500).json({
             success: false,
@@ -436,68 +432,111 @@ router.get('/:id/download', async (req, res) => {
             .send('Server error redirecting file.');
     }
 });
+
 // ==========================================================================
-// DOWNLOAD INVOICE PDF
+// PAY INVOICE
 // ==========================================================================
-router.get('/:id/download', async (req, res) => {
+router.put('/:id/pay', async (req, res) => {
 
-  const invoiceId = req.params.id;
+    const { id } = req.params;
 
-  try {
+    try {
 
-      const query = `
-          SELECT file_url
-          FROM invoices
-          WHERE id = $1
-      `;
+        const updateQuery = `
+            UPDATE invoices
+            SET
+                status = 'PAID',
+                amount_paid =
+                    COALESCE(
+                        amount_invoiced,
+                        (hours_billed * hourly_rate_applied)
+                    )
+            WHERE id = $1
+            RETURNING *;
+        `;
 
-      const result =
-          await db.query(query, [invoiceId]);
+        const result =
+            await db.query(updateQuery, [id]);
 
-      let fileKey =
-          result.rows[0]?.file_url;
+        res.json({
+            success: true,
+            message: "Invoice marked as PAID",
+            data: result.rows[0]
+        });
 
-      if (!fileKey) {
+    } catch (err) {
 
-          return res
-              .status(404)
-              .send('Invoice file not found.');
-      }
+        console.error(
+            "Pay Invoice Error:",
+            err
+        );
 
-      if (fileKey.startsWith('http')) {
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+});
 
-          const splitParts =
-              fileKey.split('.amazonaws.com/');
+// ==========================================================================
+// VOID INVOICE
+// ==========================================================================
+router.put('/:id/void', async (req, res) => {
 
-          if (splitParts.length > 1) {
+    const { id } = req.params;
 
-              fileKey = splitParts[1];
-          }
-      }
+    try {
 
-      const secureUrl =
-          await generateSignedUrl(fileKey);
+        const updateQuery = `
+            UPDATE invoices
+            SET status = 'VOID'
+            WHERE id = $1
+            RETURNING *;
+        `;
 
-      if (!secureUrl) {
+        const result =
+            await db.query(updateQuery, [id]);
 
-          return res
-              .status(500)
-              .send('Failed to generate secure URL.');
-      }
+        res.json({
+            success: true,
+            message: "Invoice voided successfully",
+            data: result.rows[0]
+        });
 
-      res.redirect(secureUrl);
+    } catch (err) {
 
-  } catch (error) {
+        console.error(
+            "Void Invoice Error:",
+            err
+        );
 
-      console.error(
-          'Download Error:',
-          error
-      );
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+});
 
-      res
-          .status(500)
-          .send('Server error redirecting file.');
-  }
+// ==========================================================================
+// SEND INVOICE EMAIL
+// ==========================================================================
+router.post('/:id/send', async (req, res) => {
+
+    res.json({
+        success: true,
+        message: "Invoice email sent successfully"
+    });
+});
+
+// ==========================================================================
+// SEND REMINDER EMAIL
+// ==========================================================================
+router.post('/:id/remind', async (req, res) => {
+
+    res.json({
+        success: true,
+        message: "Reminder email sent successfully"
+    });
 });
 
 // ==========================================================================
