@@ -436,6 +436,69 @@ router.get('/:id/download', async (req, res) => {
             .send('Server error redirecting file.');
     }
 });
+// ==========================================================================
+// DOWNLOAD INVOICE PDF
+// ==========================================================================
+router.get('/:id/download', async (req, res) => {
+
+  const invoiceId = req.params.id;
+
+  try {
+
+      const query = `
+          SELECT file_url
+          FROM invoices
+          WHERE id = $1
+      `;
+
+      const result =
+          await db.query(query, [invoiceId]);
+
+      let fileKey =
+          result.rows[0]?.file_url;
+
+      if (!fileKey) {
+
+          return res
+              .status(404)
+              .send('Invoice file not found.');
+      }
+
+      if (fileKey.startsWith('http')) {
+
+          const splitParts =
+              fileKey.split('.amazonaws.com/');
+
+          if (splitParts.length > 1) {
+
+              fileKey = splitParts[1];
+          }
+      }
+
+      const secureUrl =
+          await generateSignedUrl(fileKey);
+
+      if (!secureUrl) {
+
+          return res
+              .status(500)
+              .send('Failed to generate secure URL.');
+      }
+
+      res.redirect(secureUrl);
+
+  } catch (error) {
+
+      console.error(
+          'Download Error:',
+          error
+      );
+
+      res
+          .status(500)
+          .send('Server error redirecting file.');
+  }
+});
 
 // ==========================================================================
 // EXPORT ROUTER
