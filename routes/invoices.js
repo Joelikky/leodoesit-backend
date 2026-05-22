@@ -99,6 +99,7 @@ router.post('/', async (req, res) => {
                 e.net_terms,
                 e.vendor_address AS client_address,
                 c.company_name AS client_name,
+                c.billing_email,
                 ten.domain_prefix
             FROM timesheets t
             JOIN users u ON t.user_id = u.id
@@ -348,14 +349,13 @@ router.post('/', async (req, res) => {
             const contractorName =
                 `${data.first_name} ${data.last_name}`;
 
-            const adminEmail =
-                process.env.ADMIN_NOTIFY_EMAIL ||
-                process.env.EMAIL_USER;
-
             await sendInvoiceEmail(
-                adminEmail,
-                invoiceNumber,
-                s3Url
+                data.domain_prefix,
+                data.billing_email,
+                contractorName,
+                monthName,
+                s3Url,
+                invoiceNumber
             );
 
             console.log(
@@ -573,6 +573,10 @@ router.post('/:id/send', async (req, res) => {
             SELECT
                 i.invoice_number,
                 i.file_url,
+                COALESCE(
+                    i.amount_invoiced,
+                    (i.hours_billed * i.hourly_rate_applied)
+                ) AS amount_invoiced,
                 c.company_name,
                 c.billing_email
             FROM invoices i
@@ -596,9 +600,12 @@ router.post('/:id/send', async (req, res) => {
             result.rows[0];
 
         await sendInvoiceEmail(
+            'leodoesit',
             invoice.billing_email,
-            invoice.invoice_number,
-            invoice.file_url
+            invoice.company_name,
+            'Current Month',
+            invoice.file_url,
+            invoice.invoice_number
         );
 
         res.json({
@@ -634,6 +641,10 @@ router.post('/:id/remind', async (req, res) => {
             SELECT
                 i.invoice_number,
                 i.file_url,
+                COALESCE(
+                    i.amount_invoiced,
+                    (i.hours_billed * i.hourly_rate_applied)
+                ) AS amount_invoiced,
                 c.company_name,
                 c.billing_email
             FROM invoices i
@@ -657,9 +668,11 @@ router.post('/:id/remind', async (req, res) => {
             result.rows[0];
 
         await sendBalanceReminderEmail(
+            'leodoesit',
             invoice.billing_email,
+            invoice.company_name,
             invoice.invoice_number,
-            invoice.file_url
+            invoice.amount_invoiced
         );
 
         res.json({
