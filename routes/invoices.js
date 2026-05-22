@@ -4,8 +4,16 @@ const db = require('../db');
 
 // UTILITIES
 const { generateInvoiceBuffer } = require('../utils/pdfGenerator');
-const { uploadInvoiceToS3, generateSignedUrl } = require('../utils/s3Service');
-const { sendInvoiceEmail } = require('../utils/mailer');
+
+const {
+    uploadInvoiceToS3,
+    generateSignedUrl
+} = require('../utils/s3Service');
+
+const {
+    sendInvoiceEmail,
+    sendBalanceReminderEmail
+} = require('../utils/mailer');
 
 // ==========================================================================
 // GET ALL INVOICES
@@ -41,7 +49,8 @@ router.get('/', async (req, res) => {
             ORDER BY i.due_date DESC;
         `;
 
-        const result = await db.query(query, [tenantId]);
+        const result =
+            await db.query(query, [tenantId]);
 
         res.json({
             success: true,
@@ -51,7 +60,10 @@ router.get('/', async (req, res) => {
 
     } catch (err) {
 
-        console.error("Fetch Invoice Error:", err);
+        console.error(
+            "Fetch Invoice Error:",
+            err
+        );
 
         res.status(500).json({
             success: false,
@@ -96,10 +108,11 @@ router.post('/', async (req, res) => {
             WHERE t.id = $2;
         `;
 
-        const mathResult = await db.query(
-            mathQuery,
-            [client_id, timesheet_id]
-        );
+        const mathResult =
+            await db.query(
+                mathQuery,
+                [client_id, timesheet_id]
+            );
 
         if (mathResult.rowCount === 0) {
 
@@ -132,7 +145,9 @@ router.post('/', async (req, res) => {
                 .padStart(2, '0');
 
         const uniquePin =
-            Math.floor(1000 + Math.random() * 9000);
+            Math.floor(
+                1000 + Math.random() * 9000
+            );
 
         const invoiceNumber =
             `${yy}${mm}${data.invoice_num || '00'}-${uniquePin}`;
@@ -162,9 +177,10 @@ router.post('/', async (req, res) => {
                     .padStart(2, '0');
 
             const m =
-                date.toLocaleString('default', {
-                    month: 'short'
-                });
+                date.toLocaleString(
+                    'default',
+                    { month: 'short' }
+                );
 
             const y =
                 date.getFullYear();
@@ -176,9 +192,12 @@ router.post('/', async (req, res) => {
             new Date(data.period_start);
 
         const monthName =
-            invoiceDate.toLocaleString('en-US', {
-                month: 'long'
-            }).toLowerCase();
+            invoiceDate
+                .toLocaleString(
+                    'en-US',
+                    { month: 'long' }
+                )
+                .toLowerCase();
 
         const year =
             invoiceDate.getFullYear();
@@ -321,7 +340,7 @@ router.post('/', async (req, res) => {
         );
 
         // ======================================================
-        // SEND EMAIL
+        // AUTO SEND EMAIL
         // ======================================================
 
         try {
@@ -333,15 +352,14 @@ router.post('/', async (req, res) => {
                 process.env.ADMIN_NOTIFY_EMAIL ||
                 process.env.EMAIL_USER;
 
-            sendInvoiceEmail(
-                data.domain_prefix,
+            await sendInvoiceEmail(
                 adminEmail,
-                contractorName,
-                monthName,
-                s3Url,
-                invoiceNumber
-            ).catch(err =>
-                console.error("Email Error:", err)
+                invoiceNumber,
+                s3Url
+            );
+
+            console.log(
+                "✅ Invoice email auto sent"
             );
 
         } catch (emailError) {
@@ -354,13 +372,17 @@ router.post('/', async (req, res) => {
 
         res.status(201).json({
             success: true,
-            message: "Invoice created successfully!",
+            message:
+                "Invoice created successfully!",
             data: insertResult.rows[0]
         });
 
     } catch (err) {
 
-        console.error("Invoice Creation Error:", err);
+        console.error(
+            "Invoice Creation Error:",
+            err
+        );
 
         res.status(500).json({
             success: false,
@@ -385,7 +407,10 @@ router.get('/:id/download', async (req, res) => {
         `;
 
         const result =
-            await db.query(query, [invoiceId]);
+            await db.query(
+                query,
+                [invoiceId]
+            );
 
         let fileKey =
             result.rows[0]?.file_url;
@@ -394,13 +419,17 @@ router.get('/:id/download', async (req, res) => {
 
             return res
                 .status(404)
-                .send('Invoice file not found.');
+                .send(
+                    'Invoice file not found.'
+                );
         }
 
         if (fileKey.startsWith('http')) {
 
             const splitParts =
-                fileKey.split('.amazonaws.com/');
+                fileKey.split(
+                    '.amazonaws.com/'
+                );
 
             if (splitParts.length > 1) {
 
@@ -409,13 +438,17 @@ router.get('/:id/download', async (req, res) => {
         }
 
         const secureUrl =
-            await generateSignedUrl(fileKey);
+            await generateSignedUrl(
+                fileKey
+            );
 
         if (!secureUrl) {
 
             return res
                 .status(500)
-                .send('Failed to generate secure URL.');
+                .send(
+                    'Failed to generate secure URL.'
+                );
         }
 
         res.redirect(secureUrl);
@@ -429,7 +462,9 @@ router.get('/:id/download', async (req, res) => {
 
         res
             .status(500)
-            .send('Server error redirecting file.');
+            .send(
+                'Server error redirecting file.'
+            );
     }
 });
 
@@ -456,11 +491,15 @@ router.put('/:id/pay', async (req, res) => {
         `;
 
         const result =
-            await db.query(updateQuery, [id]);
+            await db.query(
+                updateQuery,
+                [id]
+            );
 
         res.json({
             success: true,
-            message: "Invoice marked as PAID",
+            message:
+                "Invoice marked as PAID",
             data: result.rows[0]
         });
 
@@ -495,11 +534,15 @@ router.put('/:id/void', async (req, res) => {
         `;
 
         const result =
-            await db.query(updateQuery, [id]);
+            await db.query(
+                updateQuery,
+                [id]
+            );
 
         res.json({
             success: true,
-            message: "Invoice voided successfully",
+            message:
+                "Invoice voided successfully",
             data: result.rows[0]
         });
 
@@ -522,10 +565,60 @@ router.put('/:id/void', async (req, res) => {
 // ==========================================================================
 router.post('/:id/send', async (req, res) => {
 
-    res.json({
-        success: true,
-        message: "Invoice email sent successfully"
-    });
+    const { id } = req.params;
+
+    try {
+
+        const query = `
+            SELECT
+                i.invoice_number,
+                i.file_url,
+                c.company_name,
+                c.billing_email
+            FROM invoices i
+            LEFT JOIN clients c
+            ON i.client_id = c.id
+            WHERE i.id = $1
+        `;
+
+        const result =
+            await db.query(query, [id]);
+
+        if (result.rowCount === 0) {
+
+            return res.status(404).json({
+                success: false,
+                error: "Invoice not found"
+            });
+        }
+
+        const invoice =
+            result.rows[0];
+
+        await sendInvoiceEmail(
+            invoice.billing_email,
+            invoice.invoice_number,
+            invoice.file_url
+        );
+
+        res.json({
+            success: true,
+            message:
+                "Invoice email sent successfully"
+        });
+
+    } catch (err) {
+
+        console.error(
+            "Send Invoice Error:",
+            err
+        );
+
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
 });
 
 // ==========================================================================
@@ -533,10 +626,60 @@ router.post('/:id/send', async (req, res) => {
 // ==========================================================================
 router.post('/:id/remind', async (req, res) => {
 
-    res.json({
-        success: true,
-        message: "Reminder email sent successfully"
-    });
+    const { id } = req.params;
+
+    try {
+
+        const query = `
+            SELECT
+                i.invoice_number,
+                i.file_url,
+                c.company_name,
+                c.billing_email
+            FROM invoices i
+            LEFT JOIN clients c
+            ON i.client_id = c.id
+            WHERE i.id = $1
+        `;
+
+        const result =
+            await db.query(query, [id]);
+
+        if (result.rowCount === 0) {
+
+            return res.status(404).json({
+                success: false,
+                error: "Invoice not found"
+            });
+        }
+
+        const invoice =
+            result.rows[0];
+
+        await sendBalanceReminderEmail(
+            invoice.billing_email,
+            invoice.invoice_number,
+            invoice.file_url
+        );
+
+        res.json({
+            success: true,
+            message:
+                "Reminder email sent successfully"
+        });
+
+    } catch (err) {
+
+        console.error(
+            "Reminder Error:",
+            err
+        );
+
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
 });
 
 // ==========================================================================
