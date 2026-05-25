@@ -10,6 +10,7 @@ const gandivaTransporter = nodemailer.createTransport({
     host: 'smtp.zoho.com',
     port: 587,
     secure: false, // TLS
+    family: 4,     // 🚀 FORCES IPv4 (Fixes the Render ENETUNREACH crash)
     pool: true,              
     maxConnections: 1,      
     maxMessages: 100,       
@@ -21,6 +22,7 @@ const ldiTransporter = nodemailer.createTransport({
     host: 'smtp.office365.com',
     port: 587,
     secure: false, // TLS
+    family: 4,     // 🚀 FORCES IPv4 (Fixes the Render ENETUNREACH crash)
     pool: true,              
     maxConnections: 1,      
     maxMessages: 100,       
@@ -250,7 +252,8 @@ const sendTimesheetSubmissionEmail = async (tenantPrefix, employeeEmail, adminEm
         return false;
     }
 };
-// 6. TIMESHEET APPROVAL EMAIL (🔥 NEW)
+
+// 6. TIMESHEET APPROVAL EMAIL
 const sendTimesheetApprovalEmail = async (tenantPrefix, contractorEmail, contractorName, billingPeriod, totalHours) => {
     try {
         const isGandiva = tenantPrefix === 'gandiva';
@@ -293,5 +296,5 @@ module.exports = {
     sendBalanceReminderEmail, 
     sendTimesheetReminder, 
     sendTimesheetSubmissionEmail,
-    sendTimesheetApprovalEmail // 🔥 Added this!
+    sendTimesheetApprovalEmail
 };
