@@ -2,8 +2,7 @@ const nodemailer = require('nodemailer');
 const path = require('path');
 
 // ==========================================
-// 🚀 DYNAMIC, POOLED TRANSPORTER LOGIC
-// We create these ONCE at the top so they actually share the pool!
+// 🚀 TRANSPORTER LOGIC (POOLING DISABLED FOR DEBUGGING)
 // ==========================================
 
 const gandivaTransporter = nodemailer.createTransport({
@@ -11,11 +10,19 @@ const gandivaTransporter = nodemailer.createTransport({
     port: 587,
     secure: false, // TLS
     family: 4,     // 🚀 FORCES IPv4 (Fixes the Render ENETUNREACH crash)
-    pool: true,              
-    maxConnections: 1,      
-    maxMessages: 100,       
+    
+    // ❌ REMOVED POOLING SO IT STOPS HANGING
+    // pool: true,              
+    // maxConnections: 1,      
+    // maxMessages: 100,       
+
     auth: { user: process.env.GANDIVA_EMAIL, pass: process.env.GANDIVA_PASS },
-    tls: { ciphers: 'SSLv3', rejectUnauthorized: false }
+    tls: { ciphers: 'SSLv3', rejectUnauthorized: false },
+
+    // 🚀 NEW: THE ULTIMATE DEBUGGER
+    debug: true,             // Prints raw SMTP traffic to Render logs
+    logger: true,            // Enables the internal logger
+    connectionTimeout: 10000 // If it hangs for 10 seconds, force a crash/error
 });
 
 const ldiTransporter = nodemailer.createTransport({
@@ -23,11 +30,19 @@ const ldiTransporter = nodemailer.createTransport({
     port: 587,
     secure: false, // TLS
     family: 4,     // 🚀 FORCES IPv4 (Fixes the Render ENETUNREACH crash)
-    pool: true,              
-    maxConnections: 1,      
-    maxMessages: 100,       
+    
+    // ❌ REMOVED POOLING SO IT STOPS HANGING
+    // pool: true,              
+    // maxConnections: 1,      
+    // maxMessages: 100,       
+
     auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    tls: { ciphers: 'SSLv3', rejectUnauthorized: false }
+    tls: { ciphers: 'SSLv3', rejectUnauthorized: false },
+
+    // 🚀 NEW: THE ULTIMATE DEBUGGER
+    debug: true,             
+    logger: true,            
+    connectionTimeout: 10000 
 });
 
 const getTransporter = (isGandiva) => isGandiva ? gandivaTransporter : ldiTransporter;
