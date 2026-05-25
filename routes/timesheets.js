@@ -133,8 +133,8 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
         const isGandiva = user.domain_prefix === 'gandiva';
         const adminEmail = isGandiva ? process.env.GANDIVA_EMAIL : (process.env.ADMIN_NOTIFY_EMAIL || process.env.EMAIL_USER);
 
-        sendTimesheetSubmissionEmail(user.domain_prefix, user.email, adminEmail, contractorName, billingPeriod, total_hours)
-            .catch(err => console.error("Background email error:", err));
+        // ✅ FIX: Added `await` here
+        await sendTimesheetSubmissionEmail(user.domain_prefix, user.email, adminEmail, contractorName, billingPeriod, total_hours);
     }
 
     res.status(201).json({ success: true, data: result.rows[0] });
@@ -169,8 +169,8 @@ router.put('/:id/approve', async (req, res) => {
         const endDate = new Date(timesheet.period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         const billingPeriod = `${startDate} - ${endDate}`;
 
-        sendTimesheetApprovalEmail(user.domain_prefix, user.email, contractorName, billingPeriod, timesheet.total_hours)
-            .catch(err => console.error("Background approval email error:", err));
+        // ✅ FIX: Added `await` here
+        await sendTimesheetApprovalEmail(user.domain_prefix, user.email, contractorName, billingPeriod, timesheet.total_hours);
     }
 
     res.json({ success: true, message: "Timesheet officially approved!", data: timesheet });
@@ -206,6 +206,7 @@ router.put('/:id/reject', async (req, res) => {
     const billingPeriod = `${new Date(timesheet.period_start).toLocaleDateString()} - ${new Date(timesheet.period_end).toLocaleDateString()}`;
     const contractorName = `${user.first_name} ${user.last_name}`;
     
+    // (This one already had await, which was great!)
     await sendRejectionEmail(user.domain_prefix, user.email, contractorName, billingPeriod, rejection_reason);
 
     res.json({ success: true, message: "Timesheet rejected and email sent!", data: timesheet });
@@ -268,11 +269,11 @@ router.put('/:id/status', async (req, res) => {
         const billingPeriod = `${startDate} - ${endDate}`;
 
         if (status === 'APPROVED') {
-            sendTimesheetApprovalEmail(user.domain_prefix, user.email, contractorName, billingPeriod, timesheet.total_hours)
-                .catch(err => console.error("Background approval email error:", err));
+            // ✅ FIX: Added `await` here
+            await sendTimesheetApprovalEmail(user.domain_prefix, user.email, contractorName, billingPeriod, timesheet.total_hours);
         } else if (status === 'REJECTED') {
-            sendRejectionEmail(user.domain_prefix, user.email, contractorName, billingPeriod, admin_notes)
-                .catch(err => console.error("Background rejection email error:", err));
+            // ✅ FIX: Added `await` here
+            await sendRejectionEmail(user.domain_prefix, user.email, contractorName, billingPeriod, admin_notes);
         }
     }
 
