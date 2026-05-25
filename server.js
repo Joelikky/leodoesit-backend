@@ -9,7 +9,7 @@ require('./scheduler');
 
 const app = express();
 
-// 🔥 CHANGED: Secure CORS Policy for Production
+// 🔥 Secure CORS Policy for Production
 app.use(cors({
   origin: [
     'http://localhost:5173',                  // Your local Vite React server
@@ -20,47 +20,43 @@ app.use(cors({
 
 app.use(express.json());
 
-// --- WE ADDED THESE TWO LINES ---
+// ✅ NEW: Added a root route to prevent "Cannot GET /" errors
+app.get('/', (req, res) => {
+    res.send('🚀 Leodoesit Backend API is awake and running on Vercel!');
+});
+
+// --- ROUTES ---
 const userRoutes = require('./routes/users');
 app.use('/api/users', userRoutes);
-// --------------------------------
 
 const timesheetRoutes = require('./routes/timesheets');
 app.use('/api/timesheets', timesheetRoutes);
-// ---------------------------
 
-// --- ADD THESE TWO LINES ---
 const clientRoutes = require('./routes/clients');
 app.use('/api/clients', clientRoutes);
-// ---------------------------
 
-// --- ADD THESE TWO LINES ---
 const invoiceRoutes = require('./routes/invoices');
 app.use('/api/invoices', invoiceRoutes);
-// ---------------------------
 
-// --- 🔥 NEW: SUB VENDORS ROUTE 🔥 ---
 const subVendorRoutes = require('./routes/subVendors');
 app.use('/api/sub_vendors', subVendorRoutes);
-// ------------------------------------
 
 app.use('/api/auth', require('./routes/auth'));
 
-// --- NEW: Update W2 Compliance Documents ---
+// --- Update W2 Compliance Documents ---
 app.put('/api/contractors/:id/compliance', async (req, res) => {
   const { id } = req.params;
   const { i9_completed, w4_completed, everify_completed, bank_details_completed } = req.body;
   
   try {
-      // 🔥 Make sure this updates employee_details, not users!
       const result = await db.query(
           `UPDATE employee_details 
-           SET i9_completed = $1, 
-               w4_completed = $2, 
-               everify_completed = $3, 
-               bank_details_completed = $4
-           WHERE user_id = $5 
-           RETURNING *`,
+            SET i9_completed = $1, 
+                w4_completed = $2, 
+                everify_completed = $3, 
+                bank_details_completed = $4
+            WHERE user_id = $5 
+            RETURNING *`,
           [i9_completed, w4_completed, everify_completed, bank_details_completed, id]
       );
       
@@ -74,7 +70,6 @@ app.put('/api/contractors/:id/compliance', async (req, res) => {
       res.status(500).json({ success: false, error: 'Failed to update compliance records' });
   }
 });
-// -------------------------------------------
 
 app.get('/api/test-db', async (req, res) => {
   try {
@@ -90,7 +85,13 @@ app.get('/api/test-db', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// 🔥 VERCEL COMPATIBILITY:
+// In local development, app.listen works. In Vercel, we must export the app.
+if (process.env.NODE_ENV !== 'production') {
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}
+
+module.exports = app; // 🚀 Required for Vercel deployment
