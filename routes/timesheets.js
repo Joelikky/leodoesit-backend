@@ -148,10 +148,14 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
 router.put('/:id/approve', async (req, res) => {
   const { id } = req.params; 
   try {
+    console.log(`🚀 CHECKPOINT 1: Route /approve hit for ID: ${id}`);
     const updateQuery = `UPDATE timesheets SET status = 'APPROVED' WHERE id = $1 RETURNING *;`;
     const result = await db.query(updateQuery, [id]);
     
-    if (result.rowCount === 0) return res.status(404).json({ success: false, error: "Timesheet not found" });
+    if (result.rowCount === 0) {
+        console.log("❌ CHECKPOINT 1.5: Timesheet not found in DB!");
+        return res.status(404).json({ success: false, error: "Timesheet not found" });
+    }
     
     const timesheet = result.rows[0];
 
@@ -163,19 +167,23 @@ router.put('/:id/approve', async (req, res) => {
     `, [timesheet.user_id]);
     
     if (userQuery.rowCount > 0) {
+        console.log(`👤 CHECKPOINT 2: User found! Email is ${userQuery.rows[0].email}`);
         const user = userQuery.rows[0];
         const contractorName = `${user.first_name} ${user.last_name}`;
         const startDate = new Date(timesheet.period_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const endDate = new Date(timesheet.period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         const billingPeriod = `${startDate} - ${endDate}`;
 
-        // ✅ FIX: Added `await` here
+        console.log("📧 CHECKPOINT 3: Attempting to send Nodemailer email...");
         await sendTimesheetApprovalEmail(user.domain_prefix, user.email, contractorName, billingPeriod, timesheet.total_hours);
+        console.log("✅ CHECKPOINT 4: Nodemailer finished processing without crashing!");
+    } else {
+        console.log("⚠️ CHECKPOINT 2.5: WARNING! User query returned 0 rows. Skipping email.");
     }
 
     res.json({ success: true, message: "Timesheet officially approved!", data: timesheet });
   } catch (err) {
-    console.error(err.message);
+    console.error("🔥 FATAL ERROR IN APPROVE ROUTE:", err.message);
     res.status(500).json({ success: false, error: "Failed to approve timesheet." });
   }
 });
@@ -239,6 +247,7 @@ router.put('/:id/status', async (req, res) => {
   const tenant_id = req.headers['x-tenant-id'];
 
   try {
+    console.log(`🚀 CHECKPOINT 1: Route /status hit. ID: ${id}, Status: ${status}, Tenant: ${tenant_id}`);
     const result = await db.query(
       `UPDATE timesheets 
        SET status = $1, rejection_reason = $2, updated_at = NOW() 
@@ -248,6 +257,7 @@ router.put('/:id/status', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      console.log("❌ CHECKPOINT 1.5: Update failed. No rows affected. (Check tenant_id mismatch!)");
       return res.status(404).json({ success: false, error: 'Timesheet not found or unauthorized' });
     }
 
@@ -262,6 +272,7 @@ router.put('/:id/status', async (req, res) => {
     `, [timesheet.user_id]);
 
     if (userQuery.rowCount > 0) {
+        console.log(`👤 CHECKPOINT 2: User found! Email is ${userQuery.rows[0].email}`);
         const user = userQuery.rows[0];
         const contractorName = `${user.first_name} ${user.last_name}`;
         const startDate = new Date(timesheet.period_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -269,16 +280,21 @@ router.put('/:id/status', async (req, res) => {
         const billingPeriod = `${startDate} - ${endDate}`;
 
         if (status === 'APPROVED') {
-            // ✅ FIX: Added `await` here
+            console.log("📧 CHECKPOINT 3: Attempting Approval Email...");
             await sendTimesheetApprovalEmail(user.domain_prefix, user.email, contractorName, billingPeriod, timesheet.total_hours);
+            console.log("✅ CHECKPOINT 4: Nodemailer finished!");
         } else if (status === 'REJECTED') {
-            // ✅ FIX: Added `await` here
+            console.log("📧 CHECKPOINT 3: Attempting Rejection Email...");
             await sendRejectionEmail(user.domain_prefix, user.email, contractorName, billingPeriod, admin_notes);
+            console.log("✅ CHECKPOINT 4: Nodemailer finished!");
         }
+    } else {
+        console.log("⚠️ CHECKPOINT 2.5: WARNING! User query returned 0 rows. Skipping email.");
     }
 
     res.json({ success: true, data: timesheet });
   } catch (err) {
+    console.error("🔥 FATAL ERROR IN STATUS ROUTE:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
