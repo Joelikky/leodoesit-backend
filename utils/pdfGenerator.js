@@ -1,5 +1,5 @@
 // ✅ Production-safe Puppeteer setup for Vercel / Render
-const chromium = require('@sparticuz/chromium');
+const chromium = require('@sparticuz/chromium-min');
 const puppeteer = require('puppeteer-core');
 
 /**
@@ -428,6 +428,9 @@ const generateInvoiceBuffer = async (data) => {
     let browser = null;
 
     try {
+        // Point to the hosted stable binary graphics layers
+        const executablePath = await chromium.executablePath(
+            `https://github.com/sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`);
         browser = await puppeteer.launch({
             args: chromium.args,
             defaultViewport: chromium.defaultViewport,
