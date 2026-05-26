@@ -19,11 +19,13 @@ const {
 // GET ALL INVOICES
 // ==========================================================================
 router.get('/', async (req, res) => {
-
     const tenantId = req.headers['x-tenant-id'];
 
-    try {
+    if (!tenantId) {
+        return res.status(400).json({ success: false, error: "Access Denied: Tenant ID is required." });
+    }
 
+    try {
         const query = `
             SELECT 
                 i.id,
@@ -49,8 +51,7 @@ router.get('/', async (req, res) => {
             ORDER BY i.due_date DESC;
         `;
 
-        const result =
-            await db.query(query, [tenantId]);
+        const result = await db.query(query, [tenantId]);
 
         res.json({
             success: true,
@@ -59,12 +60,7 @@ router.get('/', async (req, res) => {
         });
 
     } catch (err) {
-
-        console.error(
-            "Fetch Invoice Error:",
-            err
-        );
-
+        console.error("Fetch Invoice Error:", err);
         res.status(500).json({
             success: false,
             error: "Failed to fetch invoices"
@@ -76,14 +72,9 @@ router.get('/', async (req, res) => {
 // CREATE INVOICE
 // ==========================================================================
 router.post('/', async (req, res) => {
-
-    const {
-        client_id,
-        timesheet_id
-    } = req.body;
+    const { client_id, timesheet_id } = req.body;
 
     try {
-
         const mathQuery = `
             SELECT 
                 t.total_hours,
@@ -109,14 +100,9 @@ router.post('/', async (req, res) => {
             WHERE t.id = $2;
         `;
 
-        const mathResult =
-            await db.query(
-                mathQuery,
-                [client_id, timesheet_id]
-            );
+        const mathResult = await db.query(mathQuery, [client_id, timesheet_id]);
 
         if (mathResult.rowCount === 0) {
-
             return res.status(404).json({
                 success: false,
                 error: "No invoice records found."
@@ -124,270 +110,96 @@ router.post('/', async (req, res) => {
         }
 
         const data = mathResult.rows[0];
+        const hours = parseFloat(data.total_hours || 0);
+        const rate = parseFloat(data.invoice_rate || 0);
+        const dateObj = new Date(data.period_start);
 
-        const hours =
-            parseFloat(data.total_hours || 0);
-
-        const rate =
-            parseFloat(data.invoice_rate || 0);
-
-        const dateObj =
-            new Date(data.period_start);
-
-        const yy =
-            dateObj
-                .getFullYear()
-                .toString()
-                .slice(-2);
-
-        const mm =
-            (dateObj.getMonth() + 1)
-                .toString()
-                .padStart(2, '0');
-
-        const uniquePin =
-            Math.floor(
-                1000 + Math.random() * 9000
-            );
-
-        const invoiceNumber =
-            `${yy}${mm}${data.invoice_num || '00'}-${uniquePin}`;
+        const yy = dateObj.getFullYear().toString().slice(-2);
+        const mm = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+        const uniquePin = Math.floor(1000 + Math.random() * 9000);
+        const invoiceNumber = `${yy}${mm}${data.invoice_num || '00'}-${uniquePin}`;
 
         const today = new Date();
-
-        const termsString =
-            String(data.net_terms || 'Net 30');
-
-        const termsDays =
-            parseInt(
-                termsString.replace(/\D/g, '')
-            ) || 30;
+        const termsString = String(data.net_terms || 'Net 30');
+        const termsDays = parseInt(termsString.replace(/\D/g, '')) || 30;
 
         const dueDateObj = new Date();
-
-        dueDateObj.setDate(
-            today.getDate() + termsDays
-        );
+        dueDateObj.setDate(today.getDate() + termsDays);
 
         const formatDate = (date) => {
-
-            const d =
-                date
-                    .getDate()
-                    .toString()
-                    .padStart(2, '0');
-
-            const m =
-                date.toLocaleString(
-                    'default',
-                    { month: 'short' }
-                );
-
-            const y =
-                date.getFullYear();
-
+            const d = date.getDate().toString().padStart(2, '0');
+            const m = date.toLocaleString('default', { month: 'short' });
+            const y = date.getFullYear();
             return `${d} ${m} ${y}`;
         };
 
-        const invoiceDate =
-            new Date(data.period_start);
+        const invoiceDate = new Date(data.period_start);
+        const monthName = invoiceDate.toLocaleString('en-US', { month: 'long' }).toLowerCase();
+        const year = invoiceDate.getFullYear();
 
-        const monthName =
-            invoiceDate
-                .toLocaleString(
-                    'en-US',
-                    { month: 'long' }
-                )
-                .toLowerCase();
+        const cleanEmployeeName = `${data.first_name}_${data.last_name}`.replace(/\s+/g, '_').toLowerCase();
+        const cleanClientName = data.client_name.replace(/\s+/g, '_').toLowerCase();
+        const pdfFileName = `${cleanEmployeeName}_${monthName}_${year}_${cleanClientName}_invoice.pdf`;
 
-        const year =
-            invoiceDate.getFullYear();
+        // Generate PDF Buffer
+        const pdfBuffer = await generateInvoiceBuffer({
+            companyName: data.domain_prefix === 'gandiva' ? 'Gandiva Insights' : 'Leo Does IT Inc.',
+            invoiceNumber,
+            invoiceDate: formatDate(today),
+            netTerms: termsString,
+            dueDate: formatDate(dueDateObj),
+            clientName: data.client_name,
+            clientAddress: data.client_address || '',
+            vendorFor: data.vendor_for || 'N/A',
+            contractorName: `${data.first_name} ${data.last_name}`,
+            role: data.role || 'Consultant',
+            hours,
+            billingRate: rate,
+            billingPeriod: `${new Date(data.period_start).toLocaleDateString('en-US')} - ${new Date(data.period_end).toLocaleDateString('en-US')}`
+        });
 
-        const cleanEmployeeName =
-            `${data.first_name}_${data.last_name}`
-                .replace(/\s+/g, '_')
-                .toLowerCase();
-
-        const cleanClientName =
-            data.client_name
-                .replace(/\s+/g, '_')
-                .toLowerCase();
-
-        const pdfFileName =
-            `${cleanEmployeeName}_${monthName}_${year}_${cleanClientName}_invoice.pdf`;
-
-        // ======================================================
-        // GENERATE PDF
-        // ======================================================
-
-        const pdfBuffer =
-            await generateInvoiceBuffer({
-
-                companyName:
-                    data.domain_prefix === 'gandiva'
-                        ? 'Gandiva Insights'
-                        : 'Leo Does IT Inc.',
-
-                invoiceNumber,
-
-                invoiceDate:
-                    formatDate(today),
-
-                netTerms:
-                    termsString,
-
-                dueDate:
-                    formatDate(dueDateObj),
-
-                clientName:
-                    data.client_name,
-
-                clientAddress:
-                    data.client_address || '',
-
-                vendorFor:
-                    data.vendor_for || 'N/A',
-
-                contractorName:
-                    `${data.first_name} ${data.last_name}`,
-
-                role:
-                    data.role || 'Consultant',
-
-                hours,
-
-                billingRate:
-                    rate,
-
-                billingPeriod:
-                    `${new Date(data.period_start).toLocaleDateString('en-US')}
-                    -
-                    ${new Date(data.period_end).toLocaleDateString('en-US')}`
-            });
-
-        // ======================================================
-        // S3 UPLOAD
-        // ======================================================
-
-        const s3Url =
-            await uploadInvoiceToS3(
-                pdfBuffer,
-                pdfFileName
-            );
-
+        // S3 Storage Allocation
+        const s3Url = await uploadInvoiceToS3(pdfBuffer, pdfFileName);
         if (!s3Url) {
-
-            return res.status(500).json({
-                success: false,
-                error:
-                    "Failed to upload PDF to S3."
-            });
+            return res.status(500).json({ success: false, error: "Failed to upload PDF to S3." });
         }
 
-        // ======================================================
-        // INSERT INVOICE
-        // ======================================================
+        // Database Write Sync via Atomic Process
+        await db.query('BEGIN');
 
         const insertQuery = `
             INSERT INTO invoices (
-                client_id,
-                timesheet_id,
-                invoice_number,
-                hours_billed,
-                hourly_rate_applied,
-                status,
-                due_date,
-                amount_paid,
-                file_url
+                client_id, timesheet_id, invoice_number, hours_billed, 
+                hourly_rate_applied, status, due_date, amount_paid, file_url
             )
-            VALUES (
-                $1,
-                $2,
-                $3,
-                $4,
-                $5,
-                'UNPAID',
-                CURRENT_DATE + INTERVAL '${termsDays} days',
-                0,
-                $6
-            )
+            VALUES ($1, $2, $3, $4, $5, 'UNPAID', CURRENT_DATE + INTERVAL '${termsDays} days', 0, $6)
             RETURNING *;
         `;
+        const insertResult = await db.query(insertQuery, [client_id, timesheet_id, invoiceNumber, hours, rate, s3Url]);
 
-        const insertResult =
-            await db.query(
-                insertQuery,
-                [
-                    client_id,
-                    timesheet_id,
-                    invoiceNumber,
-                    hours,
-                    rate,
-                    s3Url
-                ]
-            );
+        await db.query(`UPDATE timesheets SET status = 'INVOICED' WHERE id = $1;`, [timesheet_id]);
+        
+        await db.query('COMMIT');
 
-        // ======================================================
-        // UPDATE TIMESHEET
-        // ======================================================
-
-        await db.query(
-            `
-            UPDATE timesheets
-            SET status = 'INVOICED'
-            WHERE id = $1;
-            `,
-            [timesheet_id]
-        );
-
-        // ======================================================
-        // AUTO SEND EMAIL
-        // ======================================================
-
+        // Non-blocking Outbound Email Service Trigger
         try {
-
-            const contractorName =
-                `${data.first_name} ${data.last_name}`;
-
-            await sendInvoiceEmail(
-                data.domain_prefix,
-                data.billing_email,
-                contractorName,
-                monthName,
-                s3Url,
-                invoiceNumber
-            );
-
-            console.log(
-                "✅ Invoice email auto sent"
-            );
-
+            const contractorName = `${data.first_name} ${data.last_name}`;
+            await sendInvoiceEmail(data.domain_prefix, data.billing_email, contractorName, monthName, s3Url, invoiceNumber);
+            console.log("✅ Invoice email auto sent");
         } catch (emailError) {
-
-            console.error(
-                "Email Trigger Error:",
-                emailError.message
-            );
+            console.error("Email Trigger Error:", emailError.message);
         }
 
         res.status(201).json({
             success: true,
-            message:
-                "Invoice created successfully!",
+            message: "Invoice created successfully!",
             data: insertResult.rows[0]
         });
 
     } catch (err) {
-
-        console.error(
-            "Invoice Creation Error:",
-            err
-        );
-
-        res.status(500).json({
-            success: false,
-            error: err.message
-        });
+        await db.query('ROLLBACK');
+        console.error("Invoice Creation Error:", err);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -395,76 +207,34 @@ router.post('/', async (req, res) => {
 // DOWNLOAD INVOICE PDF
 // ==========================================================================
 router.get('/:id/download', async (req, res) => {
-
     const invoiceId = req.params.id;
 
     try {
-
-        const query = `
-            SELECT file_url
-            FROM invoices
-            WHERE id = $1
-        `;
-
-        const result =
-            await db.query(
-                query,
-                [invoiceId]
-            );
-
-        let fileKey =
-            result.rows[0]?.file_url;
+        const query = `SELECT file_url FROM invoices WHERE id = $1`;
+        const result = await db.query(query, [invoiceId]);
+        let fileKey = result.rows[0]?.file_url;
 
         if (!fileKey) {
-
-            return res
-                .status(404)
-                .send(
-                    'Invoice file not found.'
-                );
+            return res.status(404).send('Invoice file not found.');
         }
 
         if (fileKey.startsWith('http')) {
-
-            const splitParts =
-                fileKey.split(
-                    '.amazonaws.com/'
-                );
-
+            const splitParts = fileKey.split('.amazonaws.com/');
             if (splitParts.length > 1) {
-
                 fileKey = splitParts[1];
             }
         }
 
-        const secureUrl =
-            await generateSignedUrl(
-                fileKey
-            );
-
+        const secureUrl = await generateSignedUrl(fileKey);
         if (!secureUrl) {
-
-            return res
-                .status(500)
-                .send(
-                    'Failed to generate secure URL.'
-                );
+            return res.status(500).send('Failed to generate secure URL.');
         }
 
         res.redirect(secureUrl);
 
     } catch (error) {
-
-        console.error(
-            'Download Error:',
-            error
-        );
-
-        res
-            .status(500)
-            .send(
-                'Server error redirecting file.'
-            );
+        console.error('Download Error:', error);
+        res.status(500).send('Server error redirecting file.');
     }
 });
 
@@ -472,91 +242,82 @@ router.get('/:id/download', async (req, res) => {
 // PAY INVOICE
 // ==========================================================================
 router.put('/:id/pay', async (req, res) => {
-
     const { id } = req.params;
 
     try {
-
         const updateQuery = `
             UPDATE invoices
-            SET
-                status = 'PAID',
-                amount_paid =
-                    COALESCE(
-                        amount_invoiced,
-                        (hours_billed * hourly_rate_applied)
-                    )
+            SET status = 'PAID',
+                amount_paid = COALESCE(amount_invoiced, (hours_billed * hourly_rate_applied))
             WHERE id = $1
             RETURNING *;
         `;
-
-        const result =
-            await db.query(
-                updateQuery,
-                [id]
-            );
+        const result = await db.query(updateQuery, [id]);
 
         res.json({
             success: true,
-            message:
-                "Invoice marked as PAID",
+            message: "Invoice marked as PAID",
             data: result.rows[0]
         });
 
     } catch (err) {
-
-        console.error(
-            "Pay Invoice Error:",
-            err
-        );
-
-        res.status(500).json({
-            success: false,
-            error: err.message
-        });
+        console.error("Pay Invoice Error:", err);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
 // ==========================================================================
-// VOID INVOICE
+// 🔄 VOID INVOICE & RESTORE HOURS TO HUB (FIXED)
 // ==========================================================================
 router.put('/:id/void', async (req, res) => {
-
     const { id } = req.params;
 
     try {
+        // Init multi-stage database transaction context
+        await db.query('BEGIN');
 
-        const updateQuery = `
+        // A. Identify the timesheet tied to this ledger item before changing its record
+        const findQuery = `SELECT timesheet_id FROM invoices WHERE id = $1`;
+        const invoiceCheck = await db.query(findQuery, [id]);
+
+        if (invoiceCheck.rowCount === 0) {
+            await db.query('ROLLBACK');
+            return res.status(404).json({ success: false, error: "Invoice not found." });
+        }
+
+        const timesheetId = invoiceCheck.rows[0].timesheet_id;
+
+        // B. Roll back timesheet tracking state back to standard 'APPROVED'
+        if (timesheetId) {
+            const rollbackTimesheetQuery = `
+                UPDATE timesheets
+                SET status = 'APPROVED'
+                WHERE id = $1;
+            `;
+            await db.query(rollbackTimesheetQuery, [timesheetId]);
+        }
+
+        // C. Securely switch the ledger state string to 'VOIDED' instead of a hard removal
+        const voidInvoiceQuery = `
             UPDATE invoices
-            SET status = 'VOID'
+            SET status = 'VOIDED'
             WHERE id = $1
             RETURNING *;
         `;
+        const result = await db.query(voidInvoiceQuery, [id]);
 
-        const result =
-            await db.query(
-                updateQuery,
-                [id]
-            );
+        await db.query('COMMIT');
 
         res.json({
             success: true,
-            message:
-                "Invoice voided successfully",
+            message: "Invoice successfully voided. Associated billable hours returned to Invoicing Hub.",
             data: result.rows[0]
         });
 
     } catch (err) {
-
-        console.error(
-            "Void Invoice Error:",
-            err
-        );
-
-        res.status(500).json({
-            success: false,
-            error: err.message
-        });
+        await db.query('ROLLBACK');
+        console.error("Void Invoice Transaction Error:", err);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -564,67 +325,38 @@ router.put('/:id/void', async (req, res) => {
 // SEND INVOICE EMAIL
 // ==========================================================================
 router.post('/:id/send', async (req, res) => {
-
     const { id } = req.params;
 
     try {
-
         const query = `
             SELECT
                 i.invoice_number,
                 i.file_url,
-                COALESCE(
-                    i.amount_invoiced,
-                    (i.hours_billed * i.hourly_rate_applied)
-                ) AS amount_invoiced,
+                COALESCE(i.amount_invoiced, (i.hours_billed * i.hourly_rate_applied)) AS amount_invoiced,
                 c.company_name,
                 c.billing_email
             FROM invoices i
-            LEFT JOIN clients c
-            ON i.client_id = c.id
+            LEFT JOIN clients c ON i.client_id = c.id
             WHERE i.id = $1
         `;
-
-        const result =
-            await db.query(query, [id]);
+        const result = await db.query(query, [id]);
 
         if (result.rowCount === 0) {
-
-            return res.status(404).json({
-                success: false,
-                error: "Invoice not found"
-            });
+            return res.status(404).json({ success: false, error: "Invoice not found" });
         }
 
-        const invoice =
-            result.rows[0];
+        const invoice = result.rows[0];
 
-        await sendInvoiceEmail(
-            'leodoesit',
-            invoice.billing_email,
-            invoice.company_name,
-            'Current Month',
-            invoice.file_url,
-            invoice.invoice_number
-        );
+        await sendInvoiceEmail('leodoesit', invoice.billing_email, invoice.company_name, 'Current Month', invoice.file_url, invoice.invoice_number);
 
         res.json({
             success: true,
-            message:
-                "Invoice email sent successfully"
+            message: "Invoice email sent successfully"
         });
 
     } catch (err) {
-
-        console.error(
-            "Send Invoice Error:",
-            err
-        );
-
-        res.status(500).json({
-            success: false,
-            error: err.message
-        });
+        console.error("Send Invoice Error:", err);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -632,70 +364,39 @@ router.post('/:id/send', async (req, res) => {
 // SEND REMINDER EMAIL
 // ==========================================================================
 router.post('/:id/remind', async (req, res) => {
-
     const { id } = req.params;
 
     try {
-
         const query = `
             SELECT
                 i.invoice_number,
                 i.file_url,
-                COALESCE(
-                    i.amount_invoiced,
-                    (i.hours_billed * i.hourly_rate_applied)
-                ) AS amount_invoiced,
+                COALESCE(i.amount_invoiced, (i.hours_billed * i.hourly_rate_applied)) AS amount_invoiced,
                 c.company_name,
                 c.billing_email
             FROM invoices i
-            LEFT JOIN clients c
-            ON i.client_id = c.id
+            LEFT JOIN clients c ON i.client_id = c.id
             WHERE i.id = $1
         `;
-
-        const result =
-            await db.query(query, [id]);
+        const result = await db.query(query, [id]);
 
         if (result.rowCount === 0) {
-
-            return res.status(404).json({
-                success: false,
-                error: "Invoice not found"
-            });
+            return res.status(404).json({ success: false, error: "Invoice not found" });
         }
 
-        const invoice =
-            result.rows[0];
+        const invoice = result.rows[0];
 
-        await sendBalanceReminderEmail(
-            'leodoesit',
-            invoice.billing_email,
-            invoice.company_name,
-            invoice.invoice_number,
-            invoice.amount_invoiced
-        );
+        await sendBalanceReminderEmail('leodoesit', invoice.billing_email, invoice.company_name, invoice.invoice_number, invoice.amount_invoiced);
 
         res.json({
             success: true,
-            message:
-                "Reminder email sent successfully"
+            message: "Reminder email sent successfully"
         });
 
     } catch (err) {
-
-        console.error(
-            "Reminder Error:",
-            err
-        );
-
-        res.status(500).json({
-            success: false,
-            error: err.message
-        });
+        console.error("Reminder Error:", err);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// ==========================================================================
-// EXPORT ROUTER
-// ==========================================================================
 module.exports = router;

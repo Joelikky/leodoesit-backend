@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// 1. GET: Fetch employees ONLY for the active portal
+// 1. GET: Fetch ACTIVE employees ONLY for the requesting tenant
 router.get('/', async (req, res) => {
   const tenantId = req.headers['x-tenant-id']; 
 
@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
         e.i9_completed, e.w4_completed, e.everify_completed, e.bank_details_completed
       FROM public.users u
       LEFT JOIN public.employee_details e ON u.id = e.user_id
-      WHERE u.tenant_id = $1
+      WHERE u.tenant_id = $1 AND COALESCE(u.is_deleted, false) = false
       ORDER BY u.first_name ASC
     `;
     const result = await db.query(query, [tenantId]);
@@ -33,6 +33,33 @@ router.get('/', async (req, res) => {
   } catch (err) {
     console.error("Error fetching users:", err.message);
     res.status(500).json({ success: false, error: "Failed to fetch employees" });
+  }
+});
+
+// 1b. GET: Fetch ARCHIVED/SOFT-DELETED employees (Trash Bin)
+router.get('/archived', async (req, res) => {
+  const tenantId = req.headers['x-tenant-id']; 
+
+  if (!tenantId) {
+    return res.status(400).json({ success: false, error: "Access Denied: Tenant ID is required." });
+  }
+
+  try {
+    const query = `
+      SELECT 
+        u.id, u.first_name, u.last_name, u.email, u.is_active, u.tenant_id, 
+        true AS is_deleted,
+        e.role, e.contract_type
+      FROM public.users u
+      LEFT JOIN public.employee_details e ON u.id = e.user_id
+      WHERE u.tenant_id = $1 AND u.is_deleted = true
+      ORDER BY u.first_name ASC
+    `;
+    const result = await db.query(query, [tenantId]);
+    res.json({ success: true, count: result.rowCount, data: result.rows });
+  } catch (err) {
+    console.error("Error fetching archived users:", err.message);
+    res.status(500).json({ success: false, error: "Failed to fetch archived employees" });
   }
 });
 
@@ -268,7 +295,6 @@ router.post('/change-password', async (req, res) => {
   }
 
   try {
-    // A. Verify the user exists and grab their current password
     const userQuery = await db.query(`SELECT password FROM public.users WHERE id = $1`, [userId]);
     
     if (userQuery.rows.length === 0) {
@@ -277,13 +303,10 @@ router.post('/change-password', async (req, res) => {
 
     const currentPassword = userQuery.rows[0].password;
 
-    // B. Verify the old password matches exactly
     if (currentPassword !== oldPassword) {
       return res.status(401).json({ success: false, error: "Incorrect current password." });
     }
 
-    // C. Update the database with the new password
-    // NOTE: For production, remember to wrap newPassword in a bcrypt hash here!
     await db.query(
       `UPDATE public.users SET password = $1 WHERE id = $2`,
       [newPassword, userId]
@@ -308,15 +331,12 @@ router.put('/:id/password', async (req, res) => {
   }
 
   try {
-    // SECURITY: Ensure the Admin isn't changing a password for a different company
     const userCheck = await db.query(`SELECT id FROM public.users WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
     
     if (userCheck.rows.length === 0) {
       return res.status(403).json({ success: false, error: "Access Denied: User does not exist or belongs to another tenant." });
     }
 
-    // Update the password in the database
-    // NOTE: For production, remember to wrap newPassword in a bcrypt hash here!
     await db.query(
       `UPDATE public.users SET password = $1 WHERE id = $2`,
       [newPassword, id]
