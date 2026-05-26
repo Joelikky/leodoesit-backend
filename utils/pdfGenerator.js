@@ -1,5 +1,4 @@
 // ✅ Production-safe Puppeteer setup for Vercel / Render
-
 const chromium = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-core');
 
@@ -9,7 +8,6 @@ const puppeteer = require('puppeteer-core');
  * @returns {Buffer} - The raw PDF data ready for S3 upload
  */
 const generateInvoiceBuffer = async (data) => {
-
     // 1. Determine which company layout to use
     const isGandiva = data.companyName
         ?.toLowerCase()
@@ -52,9 +50,7 @@ const generateInvoiceBuffer = async (data) => {
     // ==========================================
     // 🎨 GANDIVA INSIGHTS TEMPLATE
     // ==========================================
-
     if (isGandiva) {
-
         htmlContent = `
         <!DOCTYPE html>
         <html lang="en">
@@ -68,46 +64,38 @@ const generateInvoiceBuffer = async (data) => {
                     font-size: 14px;
                     line-height: 1.4;
                 }
-
                 .header-flex {
                     display: flex;
                     justify-content: space-between;
                     align-items: flex-start;
                 }
-
                 .company-name {
                     font-size: 20px;
                     font-weight: bold;
                     margin-bottom: 5px;
                 }
-
                 .invoice-title {
                     font-size: 24px;
                     font-weight: bold;
                     margin-bottom: 15px;
                 }
-
                 .to-for-flex {
                     display: flex;
                     justify-content: space-between;
                     margin-top: 50px;
                     margin-bottom: 40px;
                 }
-
                 .to-box {
                     width: 60%;
                 }
-
                 .for-box {
                     width: 40%;
                 }
-
                 table.main-table {
                     width: 100%;
                     border-collapse: collapse;
                     border: 2px solid #000;
                 }
-
                 table.main-table th {
                     border-bottom: 1px solid #000;
                     border-right: 1px solid #000;
@@ -115,45 +103,37 @@ const generateInvoiceBuffer = async (data) => {
                     text-align: left;
                     font-weight: bold;
                 }
-
                 table.main-table td {
                     border-right: 1px solid #000;
                     padding: 12px 10px;
                     vertical-align: top;
                     height: 120px;
                 }
-
                 table.main-table th:last-child,
                 table.main-table td:last-child {
                     border-right: none;
                 }
-
                 .center-text {
                     text-align: center;
                 }
-
                 table.total-table {
                     width: 100%;
                     border-collapse: collapse;
                 }
-
                 .total-label {
                     border: 1px solid #000;
                     font-weight: bold;
                     text-align: center;
                     padding: 10px;
                 }
-
                 .total-amount {
                     border: 1px solid #000;
                     font-weight: bold;
                     padding: 10px;
                 }
-
                 .footer {
                     margin-top: 50px;
                 }
-
                 .thanks-text {
                     margin-top: 40px;
                     text-align: right;
@@ -161,27 +141,18 @@ const generateInvoiceBuffer = async (data) => {
                 }
             </style>
         </head>
-
         <body>
-
             <div class="header-flex">
                 <div>
-                    <div class="company-name">
-                        GANDIVA INSIGHTS
-                    </div>
-
+                    <div class="company-name">GANDIVA INSIGHTS</div>
                     <div>
                         accounts@gandivainsights.com<br/>
                         Gandivainsights.com<br/>
                         Houston, TX | 77058
                     </div>
                 </div>
-
                 <div>
-                    <div class="invoice-title">
-                        INVOICE
-                    </div>
-
+                    <div class="invoice-title">INVOICE</div>
                     <div>
                         INVOICE #: ${data.invoiceNumber}<br/>
                         DATE: ${invoiceDateStr}
@@ -190,7 +161,6 @@ const generateInvoiceBuffer = async (data) => {
             </div>
 
             <div class="to-for-flex">
-
                 <div class="to-box">
                     <strong>TO:</strong><br/>
                     ${data.clientName || ''}<br/>
@@ -200,7 +170,6 @@ const generateInvoiceBuffer = async (data) => {
                             : ''
                     }
                 </div>
-
                 <div class="for-box">
                     <strong>FOR:</strong><br/>
                     ${
@@ -209,11 +178,9 @@ const generateInvoiceBuffer = async (data) => {
                             : ''
                     }
                 </div>
-
             </div>
 
             <table class="main-table">
-
                 <thead>
                     <tr>
                         <th>DESCRIPTION</th>
@@ -222,40 +189,31 @@ const generateInvoiceBuffer = async (data) => {
                         <th>AMOUNT</th>
                     </tr>
                 </thead>
-
                 <tbody>
                     <tr>
                         <td>
                             ${data.contractorName || ''}
-                            ${data.role || ''}
-                            (${data.billingPeriod || ''})
+                            ${data.role ? ` - ${data.role}` : ''}
+                            ${data.billingPeriod ? `<br/>(${data.billingPeriod})` : ''}
                         </td>
-
                         <td class="center-text">
                             ${data.hours || 0}
                         </td>
-
                         <td>
                             $${formattedRate}
                         </td>
-
                         <td>
                             $${formattedAmount}
                         </td>
                     </tr>
                 </tbody>
-
             </table>
 
             <table class="total-table">
                 <tr>
                     <td></td>
                     <td></td>
-
-                    <td class="total-label">
-                        TOTAL
-                    </td>
-
+                    <td class="total-label">TOTAL</td>
                     <td class="total-amount">
                         $${formattedAmount}
                     </td>
@@ -265,33 +223,25 @@ const generateInvoiceBuffer = async (data) => {
             <div class="footer">
                 <p>
                     Make all checks payable to:
-                    GANDIVA INSIGHTS (Payable net ${netDays})
+                    <strong>GANDIVA INSIGHTS</strong> (Payable net ${netDays})
                 </p>
-
                 <p class="thanks-text">
                     Thank you for your business!
                 </p>
             </div>
-
         </body>
         </html>
         `;
-
     } else {
-
         // ==========================================
         // 🎨 LEO DOES IT TEMPLATE
         // ==========================================
-
         htmlContent = `
         <!DOCTYPE html>
         <html lang="en">
-
         <head>
             <meta charset="UTF-8" />
-
             <style>
-
                 body {
                     font-family: Helvetica, Arial, sans-serif;
                     padding: 50px 40px;
@@ -299,158 +249,123 @@ const generateInvoiceBuffer = async (data) => {
                     font-size: 13px;
                     line-height: 1.5;
                 }
-
                 .header {
                     display: flex;
                     justify-content: space-between;
                     margin-bottom: 50px;
                 }
-
                 .company-name {
                     font-size: 18px;
                     font-weight: bold;
                     color: #000;
                 }
-
                 .invoice-title {
                     font-size: 40px;
                     color: #2874A6;
                     margin: 0;
                 }
-
                 .invoice-num {
                     font-size: 14px;
                     font-weight: bold;
                 }
-
                 .meta-section {
                     display: flex;
                     justify-content: space-between;
                     margin-bottom: 40px;
                 }
-
                 .main-table {
                     width: 100%;
                     border-collapse: collapse;
                     margin-top: 20px;
                 }
-
                 .main-table th {
                     background: #2874A6;
                     color: #fff;
                     padding: 12px;
                     text-align: left;
                 }
-
                 .main-table td {
                     padding: 12px;
                     border-bottom: 1px solid #ddd;
                 }
-
                 .right-col {
                     text-align: right;
                 }
-
                 .totals-container {
                     display: flex;
                     justify-content: flex-end;
                     margin-top: 20px;
                 }
-
                 .totals-table {
                     width: 300px;
                     border-collapse: collapse;
                 }
-
                 .totals-table td {
                     padding: 10px;
                     text-align: right;
                 }
-
                 .balance-row td {
                     background: #f4f6f6;
                     font-weight: bold;
                 }
-
             </style>
         </head>
-
         <body>
-
             <div class="header">
-
                 <div>
-                    <div class="company-name">
-                        Leo Does IT Inc.
-                    </div>
-
+                    <div class="company-name">Leo Does IT Inc.</div>
                     <div>
                         1335 Regents Park Dr, Suite# 270.<br/>
                         Houston, Texas 77058.
                     </div>
                 </div>
-
                 <div>
-                    <h1 class="invoice-title">
-                        Invoice
-                    </h1>
-
+                    <h1 class="invoice-title">Invoice</h1>
                     <div class="invoice-num">
                         # LDI-${data.invoiceNumber}
                     </div>
                 </div>
-
             </div>
 
             <div class="meta-section">
-
                 <div>
                     <strong>To</strong><br/>
                     ${data.clientName || ''}<br/>
-
                     ${
                         data.clientAddress
                             ? data.clientAddress.replace(/\n/g, '<br/>')
                             : ''
                     }
                 </div>
-
                 <div>
-
                     <table>
                         <tr>
                             <td>Invoice Date:</td>
                             <td>${invoiceDateStr}</td>
                         </tr>
-
                         <tr>
                             <td>Terms:</td>
                             <td>${netTermsStr}</td>
                         </tr>
-
                         <tr>
                             <td>Due Date:</td>
                             <td>${dueDateStr}</td>
                         </tr>
                     </table>
-
                 </div>
-
             </div>
 
             <div style="margin-bottom:20px;">
                 <strong>Client / End Client</strong><br/>
                 ${data.clientName || ''}
                 ${
-                    data.vendorFor &&
-                    data.vendorFor !== 'N/A'
+                    data.vendorFor && data.vendorFor !== 'N/A'
                         ? '/ ' + data.vendorFor
                         : ''
                 }
             </div>
 
             <table class="main-table">
-
                 <thead>
                     <tr>
                         <th>#</th>
@@ -460,99 +375,90 @@ const generateInvoiceBuffer = async (data) => {
                         <th class="right-col">Amount</th>
                     </tr>
                 </thead>
-
                 <tbody>
-
                     <tr>
-
                         <td>1</td>
-
                         <td>
-                            ${data.contractorName || ''}
-                            -
+                            <strong>${data.contractorName || ''}</strong><br/>
                             ${data.role || ''}
-
                             <br/><br/>
-
-                            Time Period:
-                            ${data.billingPeriod || ''}
+                            Time Period: ${data.billingPeriod || ''}
                         </td>
-
                         <td class="right-col">
                             ${data.hours || 0}
                         </td>
-
                         <td class="right-col">
                             $${formattedRate}
                         </td>
-
                         <td class="right-col">
                             $${formattedAmount}
                         </td>
-
                     </tr>
-
                 </tbody>
-
             </table>
 
             <div class="totals-container">
-
                 <table class="totals-table">
-
                     <tr>
                         <td>Sub Total</td>
                         <td>$${formattedAmount}</td>
                     </tr>
-
                     <tr>
                         <td><strong>Total</strong></td>
                         <td><strong>$${formattedAmount}</strong></td>
                     </tr>
-
                     <tr class="balance-row">
                         <td>Balance Due</td>
                         <td>$${formattedAmount}</td>
                     </tr>
-
                 </table>
-
             </div>
 
             <div style="margin-top:60px;">
                 Thanks for your business.
             </div>
-
         </body>
         </html>
         `;
     }
 
     // ==========================================
-    // ✅ Generate PDF
+    // ✅ Safe Serverless PDF Generation Block
     // ==========================================
+    let browser = null;
 
-    const browser = await puppeteer.launch({
-        args: chromium.args,
-        defaultViewport: chromium.defaultViewport,
-        executablePath: await chromium.executablePath(),
-        headless: chromium.headless,
-    });
+    try {
+        browser = await puppeteer.launch({
+            args: chromium.args,
+            defaultViewport: chromium.defaultViewport,
+            executablePath: await chromium.executablePath(),
+            headless: chromium.headless, // Let the package handle true/new seamlessly
+            ignoreHTTPSErrors: true,
+        });
 
-    const page = await browser.newPage();
+        const page = await browser.newPage();
 
-    await page.setContent(htmlContent, {
-        waitUntil: 'networkidle0',
-    });
+        await page.setContent(htmlContent, {
+            waitUntil: 'networkidle0',
+        });
 
-    const pdfBuffer = await page.pdf({
-        format: 'A4',
-        printBackground: true,
-    });
+        const pdfBuffer = await page.pdf({
+            format: 'A4',
+            printBackground: true,
+            margin: { top: '20px', bottom: '20px' } // Helps keep text clear of physical page cuts
+        });
 
-    await browser.close();
+        return pdfBuffer;
 
-    return pdfBuffer;
+    } catch (error) {
+        console.error('Error during PDF generation context:', error);
+        throw error; 
+    } finally {
+        // Enforce browser closure under all conditions to prevent background memory leaks on Vercel
+        if (browser !== null) {
+            await browser.close();
+        }
+    }
 };
 
 module.exports = {
