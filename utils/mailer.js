@@ -2,44 +2,40 @@ const nodemailer = require('nodemailer');
 const path = require('path');
 
 // ==========================================
-// 🚀 TRANSPORTER LOGIC (POOLING DISABLED FOR DEBUGGING)
+// 🚀 TRANSPORTER LOGIC (POOLING DISABLED FOR SERVERLESS STABILITY)
 // ==========================================
 
 const gandivaTransporter = nodemailer.createTransport({
     host: 'smtp.zoho.com',
     port: 587,
     secure: false, // TLS
-    family: 4,     // 🚀 FORCES IPv4 (Fixes the Render ENETUNREACH crash)
-    
-    // ❌ REMOVED POOLING SO IT STOPS HANGING
-    // pool: true,              
-    // maxConnections: 1,      
-    // maxMessages: 100,       
-
-    auth: { user: process.env.GANDIVA_EMAIL, pass: process.env.GANDIVA_PASS },
-    tls: { ciphers: 'SSLv3', rejectUnauthorized: false },
-
-    // 🚀 NEW: THE ULTIMATE DEBUGGER
-    debug: true,             // Prints raw SMTP traffic to Render logs
-    logger: true,            // Enables the internal logger
-    connectionTimeout: 10000 // If it hangs for 10 seconds, force a crash/error
+    family: 4,     // 🚀 FORCES IPv4 (Fixes serverless route network crashes)
+    auth: { 
+        user: process.env.GANDIVA_EMAIL, 
+        pass: process.env.GANDIVA_PASS 
+    },
+    tls: { 
+        ciphers: 'SSLv3', 
+        rejectUnauthorized: false 
+    },
+    debug: true,             // Prints raw SMTP traffic to cloud runtime console logs
+    logger: true,            // Enables internal monitoring loggers
+    connectionTimeout: 10000 // Breaks hanging connections at 10s to prevent container timeouts
 });
 
 const ldiTransporter = nodemailer.createTransport({
     host: 'smtp.office365.com',
     port: 587,
     secure: false, // TLS
-    family: 4,     // 🚀 FORCES IPv4 (Fixes the Render ENETUNREACH crash)
-    
-    // ❌ REMOVED POOLING SO IT STOPS HANGING
-    // pool: true,              
-    // maxConnections: 1,      
-    // maxMessages: 100,       
-
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    tls: { ciphers: 'SSLv3', rejectUnauthorized: false },
-
-    // 🚀 NEW: THE ULTIMATE DEBUGGER
+    family: 4,     // 🚀 FORCES IPv4
+    auth: { 
+        user: process.env.EMAIL_USER, 
+        pass: process.env.EMAIL_PASS 
+    },
+    tls: { 
+        ciphers: 'SSLv3', 
+        rejectUnauthorized: false 
+    },
     debug: true,             
     logger: true,            
     connectionTimeout: 10000 
@@ -89,8 +85,12 @@ const gandivaSignature = `
     </div>
 `;
 
-// 1. INVOICE EMAIL
-const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, monthYear, s3PdfUrl, invoiceNumber) => {
+// ==========================================
+// 🛠️ ACTIVE TRANSACTION FUNCTIONALITY
+// ==========================================
+
+// 1. INVOICE EMAIL (FIXED ATTACHMENT ROUTE)
+const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, monthYear, pdfBuffer, invoiceNumber) => {
     try {
         const isGandiva = tenantPrefix === 'gandiva';
         const transporter = getTransporter(isGandiva);
@@ -99,18 +99,21 @@ const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, month
         let htmlContent = `
             <div style="font-family: Arial, sans-serif; color: #222; font-size: 14px; line-height: 1.6; max-width: 600px;">
                 <p>Hi Team,</p>
-                <p>Please find attached are the invoice <strong>#${invoiceNumber}</strong> and approved timesheets for <strong>${contractorName}</strong> for the month of <strong>${monthYear}</strong>.</p>
+                <p>Please find attached the invoice <strong>#${invoiceNumber}</strong> and approved timesheets for <strong>${contractorName}</strong> for the month of <strong>${monthYear}</strong>.</p>
                 <p>We kindly request you to confirm receipt and acceptance of the attached invoice at your earliest convenience.</p>
                 <p>Thank you for your cooperation!</p>
                 ${isGandiva ? gandivaSignature : leodoesitSignature}
             </div>
         `;
 
-        const attachments = [{ 
-            filename: `Invoice_${invoiceNumber}.pdf`, 
-            href: s3PdfUrl 
-        }];
-        attachments.push(isGandiva ? gandivaLogoAttachment : ldiLogoAttachment);
+        // 🛠️ FIX: Using the raw memory storage buffer directly to bypass localhost container port-80 mapping bottlenecks
+        const attachments = [
+            { 
+                filename: `Invoice_${invoiceNumber}.pdf`, 
+                content: pdfBuffer 
+            },
+            isGandiva ? gandivaLogoAttachment : ldiLogoAttachment
+        ];
 
         const mailOptions = {
             from: fromEmail,
@@ -144,14 +147,12 @@ const sendBalanceReminderEmail = async (tenantPrefix, clientEmail, contractorNam
                 ${isGandiva ? gandivaSignature : leodoesitSignature}
             </div>`;
 
-        const attachments = [isGandiva ? gandivaLogoAttachment : ldiLogoAttachment];
-
         const mailOptions = {
             from: fromEmail,
             to: clientEmail,
             subject: `Action Required: Outstanding Balance for #${invoiceNumber}`,
             html: htmlContent,
-            attachments: attachments
+            attachments: [isGandiva ? gandivaLogoAttachment : ldiLogoAttachment]
         };
 
         await transporter.sendMail(mailOptions);
@@ -178,14 +179,12 @@ const sendTimesheetReminder = async (tenantPrefix, contractorEmail, contractorNa
                 ${isGandiva ? gandivaSignature : leodoesitSignature}
             </div>`;
 
-        const attachments = [isGandiva ? gandivaLogoAttachment : ldiLogoAttachment];
-
         const mailOptions = {
             from: fromEmail,
             to: contractorEmail,
             subject: `Reminder: Please submit your ${monthName} timesheet`,
             html: htmlContent,
-            attachments: attachments
+            attachments: [isGandiva ? gandivaLogoAttachment : ldiLogoAttachment]
         };
 
         await transporter.sendMail(mailOptions);
@@ -304,7 +303,6 @@ const sendTimesheetApprovalEmail = async (tenantPrefix, contractorEmail, contrac
     }
 };
 
-// 🔥 Export ALL functions so your routes don't crash
 module.exports = { 
     sendRejectionEmail, 
     sendInvoiceEmail, 
