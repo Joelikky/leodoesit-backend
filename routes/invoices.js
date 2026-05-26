@@ -16,7 +16,7 @@ const {
 } = require('../utils/mailer');
 
 // ==========================================================================
-// GET ALL INVOICES
+// GET ALL INVOICES (OPTIMIZED CACHE EVILUTION)
 // ==========================================================================
 router.get('/', async (req, res) => {
     const tenantId = req.headers['x-tenant-id'];
@@ -52,6 +52,11 @@ router.get('/', async (req, res) => {
         `;
 
         const result = await db.query(query, [tenantId]);
+
+        // 🛠️ FORCE BROWSER AND VERCEL EDGE TO BYPASS CACHE FOR REAL-TIME LEDGER SYNC
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
 
         res.json({
             success: true,
@@ -297,7 +302,7 @@ router.put('/:id/void', async (req, res) => {
             await db.query(rollbackTimesheetQuery, [timesheetId]);
         }
 
-        // C. Securely switch the ledger state string to 'VOID' to align with the Enum constraints
+        // C. Securely switch the ledger state string to 'VOID' to align with Postgres custom Enum constraints
         const voidInvoiceQuery = `
             UPDATE invoices
             SET status = 'VOID'
