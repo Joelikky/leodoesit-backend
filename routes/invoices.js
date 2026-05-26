@@ -267,7 +267,7 @@ router.put('/:id/pay', async (req, res) => {
 });
 
 // ==========================================================================
-// 🔄 VOID INVOICE & RESTORE HOURS TO HUB (FIXED)
+// 🔄 VOID INVOICE & RESTORE HOURS TO HUB
 // ==========================================================================
 router.put('/:id/void', async (req, res) => {
     const { id } = req.params;
@@ -297,10 +297,10 @@ router.put('/:id/void', async (req, res) => {
             await db.query(rollbackTimesheetQuery, [timesheetId]);
         }
 
-        // C. Securely switch the ledger state string to 'VOIDED' instead of a hard removal
+        // C. Securely switch the ledger state string to 'VOID' to align with the Enum constraints
         const voidInvoiceQuery = `
             UPDATE invoices
-            SET status = 'VOIDED'
+            SET status = 'VOID'
             WHERE id = $1
             RETURNING *;
         `;
