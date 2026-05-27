@@ -67,7 +67,7 @@ router.post('/login', async (req, res) => {
         id: user.id,
         name: `${user.first_name} ${user.last_name}`,
         email: user.email,
-        role: user.employee_role || user.role, // Fallback in case role is still in the users table
+        role: user.role === 'ADMIN' ? 'ADMIN' : (user.employee_role || user.role),
         tenant_id: user.tenant_id,
         tenant_name: user.tenant_name, // Sends 'Gandiva Insights' or 'Leodoes IT' directly to React
         tenant_prefix: user.tenant_prefix,
