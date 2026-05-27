@@ -14,10 +14,25 @@ const { uploadTimesheetToS3, generateSignedUrl } = require('../utils/s3Service')
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
+// Helper function to validate UUIDv4 format before querying Postgres
+const isValidUUID = (id) => {
+  if (!id || id === 'undefined' || id === 'null') return false;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(id);
+};
+
 // 1. GET ROUTE: Fetch ALL timesheets (For the Admin Queue & Hub)
 router.get('/', async (req, res) => {
   const { status } = req.query; 
   const tenantId = req.headers['x-tenant-id']; 
+
+  // 🛡️ GUARDRAIL: Prevent Postgres UUID compilation errors
+  if (!isValidUUID(tenantId)) {
+    return res.status(400).json({ 
+      success: false, 
+      error: "Malformed or missing 'x-tenant-id' header. Expected a valid UUID." 
+    });
+  }
 
   try {
     let query = `
@@ -59,6 +74,11 @@ router.get('/', async (req, res) => {
 // 2. GET ROUTE: Fetch timesheets ONLY for the logged-in contractor
 router.get('/me/:email', async (req, res) => {
   const { email } = req.params;
+  
+  if (!email || email === 'undefined') {
+    return res.status(400).json({ success: false, error: "Email parameter is required." });
+  }
+
   try {
     const query = `
       SELECT t.*, u.first_name, u.last_name 
@@ -90,6 +110,11 @@ router.get('/me/:email', async (req, res) => {
 // 3. POST ROUTE: Submit a new timesheet WITH screenshots
 router.post('/', upload.array('screenshots', 5), async (req, res) => {
   const { user_id, period_start, period_end, total_hours } = req.body;
+  
+  // 🛡️ GUARDRAIL: Verify user_id is a valid UUID string
+  if (!isValidUUID(user_id)) {
+    return res.status(400).json({ success: false, error: "Invalid or missing user_id payload." });
+  }
   
   try {
     const screenshot_keys = [];
@@ -133,7 +158,6 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
         const isGandiva = user.domain_prefix === 'gandiva';
         const adminEmail = isGandiva ? process.env.GANDIVA_EMAIL : (process.env.ADMIN_NOTIFY_EMAIL || process.env.EMAIL_USER);
 
-        // ✅ FIX: Added `await` here
         await sendTimesheetSubmissionEmail(user.domain_prefix, user.email, adminEmail, contractorName, billingPeriod, total_hours);
     }
 
@@ -147,6 +171,11 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
 // 4. PUT ROUTE: Approve a timesheet
 router.put('/:id/approve', async (req, res) => {
   const { id } = req.params; 
+
+  if (!isValidUUID(id)) {
+    return res.status(400).json({ success: false, error: "Invalid Timesheet UUID parameter." });
+  }
+
   try {
     console.log(`🚀 CHECKPOINT 1: Route /approve hit for ID: ${id}`);
     const updateQuery = `UPDATE timesheets SET status = 'APPROVED' WHERE id = $1 RETURNING *;`;
@@ -193,6 +222,7 @@ router.put('/:id/reject', async (req, res) => {
   const { id } = req.params;
   const { rejection_reason } = req.body; 
 
+  if (!isValidUUID(id)) return res.status(400).json({ success: false, error: "Invalid Timesheet UUID parameter." });
   if (!rejection_reason) return res.status(400).json({ success: false, error: "A rejection reason is required." });
 
   try {
@@ -214,7 +244,6 @@ router.put('/:id/reject', async (req, res) => {
     const billingPeriod = `${new Date(timesheet.period_start).toLocaleDateString()} - ${new Date(timesheet.period_end).toLocaleDateString()}`;
     const contractorName = `${user.first_name} ${user.last_name}`;
     
-    // (This one already had await, which was great!)
     await sendRejectionEmail(user.domain_prefix, user.email, contractorName, billingPeriod, rejection_reason);
 
     res.json({ success: true, message: "Timesheet rejected and email sent!", data: timesheet });
@@ -227,6 +256,9 @@ router.put('/:id/reject', async (req, res) => {
 // 6. PUT ROUTE: Void a timesheet (Send back to Approval Queue)
 router.put('/:id/void', async (req, res) => {
   const { id } = req.params;
+
+  if (!isValidUUID(id)) return res.status(400).json({ success: false, error: "Invalid Timesheet UUID parameter." });
+
   try {
     const updateQuery = `UPDATE timesheets SET status = 'SUBMITTED' WHERE id = $1 RETURNING *;`;
     const result = await db.query(updateQuery, [id]);
@@ -240,11 +272,15 @@ router.put('/:id/void', async (req, res) => {
   }
 });
 
-// 7. Master Status Updater (FIXED: Checks tenant boundary via the sub-joined Users lookup)
+// 7. Master Status Updater (Checks tenant boundary via the sub-joined Users lookup)
 router.put('/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status, admin_notes } = req.body;
   const tenant_id = req.headers['x-tenant-id'];
+
+  // 🛡️ GUARDRAILS: Check parameters and headers before firing SQL
+  if (!isValidUUID(id)) return res.status(400).json({ success: false, error: "Invalid Timesheet UUID path parameter." });
+  if (!isValidUUID(tenant_id)) return res.status(400).json({ success: false, error: "Missing or invalid tenant context layout header." });
 
   try {
     console.log(`🚀 CHECKPOINT 1: Route /status hit. ID: ${id}, Status: ${status}, Tenant: ${tenant_id}`);
@@ -263,7 +299,6 @@ router.put('/:id/status', async (req, res) => {
 
     const timesheet = result.rows[0];
 
-    // Trigger emails based on the status change
     const userQuery = await db.query(`
         SELECT u.first_name, u.last_name, u.email, ten.domain_prefix 
         FROM users u
@@ -303,6 +338,10 @@ router.put('/:id/status', async (req, res) => {
 router.post('/remind', async (req, res) => {
     const { email, first_name, month } = req.body;
     const tenant_id = req.headers['x-tenant-id'];
+
+    if (!isValidUUID(tenant_id)) {
+        return res.status(400).json({ success: false, error: "Missing or invalid multi-tenant header context." });
+    }
 
     try {
         const tenantResult = await db.query('SELECT domain_prefix FROM tenants WHERE id = $1', [tenant_id]);
