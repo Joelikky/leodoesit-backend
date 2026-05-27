@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const jwt = require('jsonwebtoken'); // 👈 1. Import jsonwebtoken
 
 // POST: Universal Login - Automatically detects tenant by email!
 router.post('/login', async (req, res) => {
@@ -43,11 +44,25 @@ router.post('/login', async (req, res) => {
     // 4. Security: Delete the password from the memory object!
     delete user.password;
 
-    // 5. 🔥 CRITICAL FIX: Format the response to exactly match what React expects
+    // 5. 🔑 Generate a real JWT Token
+    // Falls back to a string default if you haven't added JWT_SECRET to your Vercel Env variables yet
+    const jwtSecret = process.env.JWT_SECRET || 'fallback_secret_for_local_dev';
+    const token = jwt.sign(
+      { 
+        id: user.id, 
+        email: user.email, 
+        tenant_id: user.tenant_id,
+        role: user.employee_role || user.role 
+      }, 
+      jwtSecret, 
+      { expiresIn: '24h' } // Token lasts 24 hours
+    );
+
+    // 6. 🔥 CRITICAL FIX: Format the response to exactly match what React expects
     res.json({ 
       success: true, 
       message: "Login successful!", 
-      token: yourGeneratedJwtTokenVariable, // 👈 Explicitly pass the token here
+      token: token, // 👈 Fixed: Swapped the broken placeholder for the real token
       data: {
         id: user.id,
         name: `${user.first_name} ${user.last_name}`,
