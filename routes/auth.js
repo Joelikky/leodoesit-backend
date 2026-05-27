@@ -47,6 +47,7 @@ router.post('/login', async (req, res) => {
     res.json({ 
       success: true, 
       message: "Login successful!", 
+      token: yourGeneratedJwtTokenVariable, // 👈 Explicitly pass the token here
       data: {
         id: user.id,
         name: `${user.first_name} ${user.last_name}`,
