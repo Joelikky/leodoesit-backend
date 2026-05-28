@@ -29,25 +29,22 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       const { PdfReader } = require('pdfreader');
       
       extractedText = await new Promise((resolve, reject) => {
-        let rows = {}; // Group text elements by their vertical Y-coordinate
+        let rows = {}; 
         
         new PdfReader().parseBuffer(fileBuffer, (err, item) => {
           if (err) {
             reject(err);
           } else if (!item) {
-            // Stream complete: compile rows sorted by top-to-bottom Y index
             let fullText = "";
             const sortedYKeys = Object.keys(rows).sort((a, b) => parseFloat(a) - parseFloat(b));
             
             sortedYKeys.forEach(y => {
-              // Sort tokens within the same row from left to right (X index)
               const rowLine = rows[y].sort((a, b) => a.x - b.x).map(el => el.text).join(" ");
               fullText += rowLine + "\n";
             });
             
             resolve(fullText);
           } else if (item.text) {
-            // Normalize cell grid variance using an approximate Y boundary coordinate window (2 units)
             const yNormalized = Math.round(item.y * 2) / 2; 
             if (!rows[yNormalized]) {
               rows[yNormalized] = [];
@@ -57,11 +54,15 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
         });
       });
 
-      // 🔥 FIXED FAILOVER: Removed unpkg config options so tesseract branches out of local absolute node paths natively
+      // 🔥 CRITICAL FAILOVER GATEWAY: Configure worker with native fallback cache routing parameters
       if (!extractedText || extractedText.trim().length === 0) {
         console.log("⚠️ [PDF Processing Warning] Text layer empty. Activating Tesseract OCR failover stream...");
         
-        const worker = await createWorker('eng');
+        // Passing an options block with explicit cache and language indicators forces a clean standard load 
+        const worker = await createWorker('eng', 1, {
+          cacheMethod: 'readOnly',
+          gzip: false
+        });
 
         const { data: { text } } = await worker.recognize(fileBuffer);
         extractedText = text;
@@ -79,12 +80,14 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       }
     }
     
-    // 3. Handle Images (PNG, JPEG) via Node-Safe OCR Engine
+    // 3. Handle Images (PNG, JPEG) via Environment-Agnostic OCR Engine
     else if (mimeType.startsWith('image/')) {
-      console.log("[OCR Image Target Block Activated] Initializing node-safe worker paths...");
+      console.log("[OCR Image Target Block Activated] Initializing cloud-safe worker paths...");
 
-      // 🔥 FIXED IMAGE BLOCK: Stripped global CDN variables for absolute environment safety
-      const worker = await createWorker('eng');
+      const worker = await createWorker('eng', 1, {
+        cacheMethod: 'readOnly',
+        gzip: false
+      });
 
       const { data: { text } } = await worker.recognize(fileBuffer);
       extractedText = text;
@@ -133,7 +136,6 @@ function parseHoursFromText(text) {
   const looseRowRegex = /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?/i;
 
   for (const line of lines) {
-    // Ignore lines that contain date ranges, URLs, or table headers to avoid counting dates as hours
     if (line.includes('/') || line.includes('-') || line.toLowerCase().includes('billing')) {
       continue;
     }
@@ -143,7 +145,6 @@ function parseHoursFromText(text) {
     
     if (match && match[1]) {
       const value = parseFloat(match[1]);
-      // Only aggregate typical weekly increments (e.g., between 4 and 60 hours per row entry)
       if (value >= 4 && value <= 60) {
         aggregatedSum += value;
         console.log(`[OCR Row Matched] Extracted line value: ${value} hrs (Current running sum: ${aggregatedSum})`);
