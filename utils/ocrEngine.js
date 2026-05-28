@@ -1,9 +1,7 @@
 // utils/ocrEngine.js
 
-const Tesseract = require('tesseract.js');
-// 🔥 FIX: Removed global require('pdf-parse') from here to prevent Vercel boot crashes!
-
-// Patched SheetJS implementation deployment package via Option 1
+// 🔥 FIX: Import createWorker from tesseract.js to customize runtime paths
+const { createWorker } = require('tesseract.js'); 
 const XLSX = require('xlsx'); 
 
 /**
@@ -19,7 +17,6 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
     // 1. Handle Excel Sheets (.xlsx, .xls)
     if (mimeType.includes('sheet') || mimeType.includes('excel') || mimeType.includes('officedocument.spreadsheetml')) {
       const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
-      
       workbook.SheetNames.forEach(sheetName => {
         const sheet = workbook.Sheets[sheetName];
         extractedText += XLSX.utils.sheet_to_txt(sheet) + '\n';
@@ -29,22 +26,29 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
     // 2. Handle Document PDFs
     else if (mimeType === 'application/pdf') {
       console.log("Lazy loading pdf-parse inside runtime execution container...");
-      
-      // 🔥 CRITICAL FIX: Load the package dynamically ONLY when a PDF is processed
       const pdfParse = require('pdf-parse');
-      
-      const options = {
-        pager: () => ({ text: "" }) // Suppresses canvas polyfill errors
-      };
-      
+      const options = { pager: () => ({ text: "" }) };
       const pdfData = await pdfParse(fileBuffer, options);
       extractedText = pdfData.text;
     }
     
-    // 3. Handle Images (PNG, JPEG) via OCR Vision Engine
+    // 3. Handle Images (PNG, JPEG) via Cloud-Decoupled OCR Engine
     else if (mimeType.startsWith('image/')) {
-      const { data: { text } } = await Tesseract.recognize(fileBuffer, 'eng');
+      console.log("[OCR Image Target Block Activated] Initializing cloud-safe worker paths...");
+
+      // 🔥 CRITICAL VERCEL FIX: Force worker to pull core .wasm assets from official unpkg CDN
+      const worker = await createWorker('eng', 1, {
+        workerPath: 'https://unpkg.com/tesseract.js@v5.1.0/dist/worker.min.js',
+        corePath: 'https://unpkg.com/tesseract.js-core@v5.1.0/tesseract-core.wasm.js',
+        logger: m => console.log(`[Tesseract Core Progress]: ${m.status} -> ${(m.progress * 100).toFixed(0)}%`)
+      });
+
+      // Execute the cloud-hosted optical character extraction block smoothly out of RAM buffer
+      const { data: { text } } = await worker.recognize(fileBuffer);
       extractedText = text;
+
+      // Gracefully terminate worker container process to free serverless memory limits immediately
+      await worker.terminate();
     }
 
     if (!extractedText) return null;
