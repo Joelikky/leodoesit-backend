@@ -1,6 +1,5 @@
 // utils/ocrEngine.js
 
-// 🔥 Import createWorker from tesseract.js to customize runtime paths
 const { createWorker } = require('tesseract.js'); 
 const XLSX = require('xlsx'); 
 
@@ -23,28 +22,45 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       });
     }
     
-    // 2. Handle Document PDFs using Stream Tokens (Zero Canvas/DOMMatrix Dependencies)
+    // 2. Handle Document PDFs using Matrix Row Grouping
     else if (mimeType === 'application/pdf') {
-      console.log("[PDF Processing] Extracting strings using raw token buffers via pdfreader...");
+      console.log("[PDF Processing] Reconstructing grid matrix positions via pdfreader...");
       
       const { PdfReader } = require('pdfreader');
       
-      // Wrap the asynchronous stream callback in a promise block
       extractedText = await new Promise((resolve, reject) => {
-        let accumulatedText = "";
+        let rows = {}; // Group text elements by their vertical Y-coordinate
         
         new PdfReader().parseBuffer(fileBuffer, (err, item) => {
           if (err) {
             reject(err);
           } else if (!item) {
-            // Stream completely finished when item evaluates as undefined
-            resolve(accumulatedText);
+            // Stream complete: compile rows sorted by top-to-bottom Y index
+            let fullText = "";
+            const sortedYKeys = Object.keys(rows).sort((a, b) => parseFloat(a) - parseFloat(b));
+            
+            sortedYKeys.forEach(y => {
+              // Sort tokens within the same row from left to right (X index)
+              const rowLine = rows[y].sort((a, b) => a.x - b.x).map(el => el.text).join(" ");
+              fullText += rowLine + "\n";
+            });
+            
+            resolve(fullText);
           } else if (item.text) {
-            // Append token lines sequentially
-            accumulatedText += item.text + "\n";
+            // Normalize cell grid variance using an approximate Y boundary coordinate window (2 units)
+            const yNormalized = Math.round(item.y * 2) / 2; 
+            if (!rows[yNormalized]) {
+              rows[yNormalized] = [];
+            }
+            rows[yNormalized].push({ text: item.text, x: item.x });
           }
         });
       });
+
+      console.log("=========================================");
+      console.log("[OCR MATRIX NORMALIZATION DUMP]:");
+      console.log(extractedText);
+      console.log("=========================================");
     }
     
     // 3. Handle Images (PNG, JPEG) via Cloud-Decoupled OCR Engine
@@ -76,7 +92,6 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
  * the sum of individual line item hour metrics automatically.
  */
 function parseHoursFromText(text) {
-  // Normalize and split text lines, removing blank fragments
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
   
   // ⚡ PASS 1: Look for an explicit, pre-aggregated total row
@@ -98,26 +113,32 @@ function parseHoursFromText(text) {
     }
   }
 
-  // ⚡ PASS 2: If no summary exists, pull and aggregate cell text blocks ("40h", "32 hrs")
+  // ⚡ PASS 2: Pull and aggregate grid row blocks ("40h", "32 hrs", "40.00")
   console.log("[OCR Pass 2 Initiated] Explicit total row missing. Running line-item extraction...");
   let aggregatedSum = 0;
   
-  // Loose pattern match without strict \b word boundaries to trap nested values cleanly like (40h)
-  const looseRowRegex = /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)/i;
+  // Captures explicit strings like "40h", or numbers matching standalone hours patterns
+  const looseRowRegex = /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?/i;
 
   for (const line of lines) {
-    // Sanitize string cells by scrubbing brackets and structural matrix characters
+    // Ignore lines that contain date ranges, URLs, or table headers to avoid counting dates as hours
+    if (line.includes('/') || line.includes('-') || line.toLowerCase().includes('billing')) {
+      continue;
+    }
+
     const cleanLine = line.replace(/[()\[\]]/g, ''); 
     const match = cleanLine.match(looseRowRegex);
     
     if (match && match[1]) {
       const value = parseFloat(match[1]);
-      aggregatedSum += value;
-      console.log(`[OCR Row Matched] Extracted line value: ${value} hrs (Current running sum: ${aggregatedSum})`);
+      // Only aggregate typical weekly increments (e.g., between 4 and 60 hours per row entry)
+      if (value >= 4 && value <= 60) {
+        aggregatedSum += value;
+        console.log(`[OCR Row Matched] Extracted line value: ${value} hrs (Current running sum: ${aggregatedSum})`);
+      }
     }
   }
 
-  // Validation boundary gate check before returning metrics
   if (aggregatedSum > 0 && aggregatedSum <= 200) {
     console.log(`[OCR Processing Complete] Combined calculation output: ${aggregatedSum} hrs`);
     return aggregatedSum;
