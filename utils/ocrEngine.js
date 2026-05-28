@@ -57,15 +57,11 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
         });
       });
 
-      // 🔥 CRITICAL FAILOVER GATEWAY: If text layer extraction yields nothing, trigger Tesseract
+      // 🔥 FIXED FAILOVER: Removed unpkg config options so tesseract branches out of local absolute node paths natively
       if (!extractedText || extractedText.trim().length === 0) {
         console.log("⚠️ [PDF Processing Warning] Text layer empty. Activating Tesseract OCR failover stream...");
         
-        const worker = await createWorker('eng', 1, {
-          workerPath: 'https://unpkg.com/tesseract.js@v5.1.0/dist/worker.min.js',
-          corePath: 'https://unpkg.com/tesseract.js-core@v5.1.0/tesseract-core.wasm.js',
-          logger: m => console.log(`[PDF Failover OCR Progress]: ${m.status} -> ${(m.progress * 100).toFixed(0)}%`)
-        });
+        const worker = await createWorker('eng');
 
         const { data: { text } } = await worker.recognize(fileBuffer);
         extractedText = text;
@@ -83,15 +79,12 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       }
     }
     
-    // 3. Handle Images (PNG, JPEG) via Cloud-Decoupled OCR Engine
+    // 3. Handle Images (PNG, JPEG) via Node-Safe OCR Engine
     else if (mimeType.startsWith('image/')) {
-      console.log("[OCR Image Target Block Activated] Initializing cloud-safe worker paths...");
+      console.log("[OCR Image Target Block Activated] Initializing node-safe worker paths...");
 
-      const worker = await createWorker('eng', 1, {
-        workerPath: 'https://unpkg.com/tesseract.js@v5.1.0/dist/worker.min.js',
-        corePath: 'https://unpkg.com/tesseract.js-core@v5.1.0/tesseract-core.wasm.js',
-        logger: m => console.log(`[Tesseract Core Progress]: ${m.status} -> ${(m.progress * 100).toFixed(0)}%`)
-      });
+      // 🔥 FIXED IMAGE BLOCK: Stripped global CDN variables for absolute environment safety
+      const worker = await createWorker('eng');
 
       const { data: { text } } = await worker.recognize(fileBuffer);
       extractedText = text;
