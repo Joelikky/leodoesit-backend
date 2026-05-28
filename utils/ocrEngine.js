@@ -23,11 +23,12 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       });
     }
     
-    // 2. Handle Document PDFs via Pure-JS Stream Reader (Bypasses DOMMatrix completely)
+    // 2. Handle Document PDFs via Dynamic Intercept Import Engine
     else if (mimeType === 'application/pdf') {
-      console.log("[PDF Processing] Extracting raw strings safely via pdf-text-reader...");
+      console.log("[PDF Processing] Dynamically importing pure-js pdf-text-reader...");
       
-      const { PdfTextReader } = require('pdf-text-reader');
+      // 🔥 FIX: Use dynamic import() to safely load the ES Module inside CommonJS
+      const { PdfTextReader } = await import('pdf-text-reader');
       const pages = await PdfTextReader.readPdfPages({ buffer: fileBuffer });
       
       pages.forEach(page => {
@@ -39,18 +40,14 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
     else if (mimeType.startsWith('image/')) {
       console.log("[OCR Image Target Block Activated] Initializing cloud-safe worker paths...");
 
-      // Force worker to pull core .wasm assets from official unpkg CDN
       const worker = await createWorker('eng', 1, {
         workerPath: 'https://unpkg.com/tesseract.js@v5.1.0/dist/worker.min.js',
         corePath: 'https://unpkg.com/tesseract.js-core@v5.1.0/tesseract-core.wasm.js',
         logger: m => console.log(`[Tesseract Core Progress]: ${m.status} -> ${(m.progress * 100).toFixed(0)}%`)
       });
 
-      // Execute the cloud-hosted optical character extraction block smoothly out of RAM buffer
       const { data: { text } } = await worker.recognize(fileBuffer);
       extractedText = text;
-
-      // Gracefully terminate worker container process to free serverless memory limits immediately
       await worker.terminate();
     }
 
@@ -68,7 +65,6 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
  * the sum of individual line item hour metrics automatically.
  */
 function parseHoursFromText(text) {
-  // Normalize and split text lines, removing blank fragments
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
   
   // ⚡ PASS 1: Look for an explicit, pre-aggregated total row
@@ -93,12 +89,9 @@ function parseHoursFromText(text) {
   // ⚡ PASS 2: If no summary exists, pull and aggregate cell text blocks ("40h", "32 hrs")
   console.log("[OCR Pass 2 Initiated] Explicit total row missing. Running line-item extraction...");
   let aggregatedSum = 0;
-  
-  // Loose pattern match without strict \b word boundaries to trap nested values cleanly like (40h)
   const looseRowRegex = /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)/i;
 
   for (const line of lines) {
-    // Sanitize string cells by scrubbing brackets and structural matrix characters
     const cleanLine = line.replace(/[()\[\]]/g, ''); 
     const match = cleanLine.match(looseRowRegex);
     
@@ -109,7 +102,6 @@ function parseHoursFromText(text) {
     }
   }
 
-  // Validation boundary gate check before returning metrics
   if (aggregatedSum > 0 && aggregatedSum <= 200) {
     console.log(`[OCR Processing Complete] Combined calculation output: ${aggregatedSum} hrs`);
     return aggregatedSum;
