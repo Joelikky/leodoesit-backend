@@ -1,6 +1,6 @@
 // utils/ocrEngine.js
 
-// 🔥 FIX: Import createWorker from tesseract.js to customize runtime paths
+// 🔥 Import createWorker from tesseract.js to customize runtime paths
 const { createWorker } = require('tesseract.js'); 
 const XLSX = require('xlsx'); 
 
@@ -36,7 +36,7 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
     else if (mimeType.startsWith('image/')) {
       console.log("[OCR Image Target Block Activated] Initializing cloud-safe worker paths...");
 
-      // 🔥 CRITICAL VERCEL FIX: Force worker to pull core .wasm assets from official unpkg CDN
+      // Force worker to pull core .wasm assets from official unpkg CDN
       const worker = await createWorker('eng', 1, {
         workerPath: 'https://unpkg.com/tesseract.js@v5.1.0/dist/worker.min.js',
         corePath: 'https://unpkg.com/tesseract.js-core@v5.1.0/tesseract-core.wasm.js',
@@ -61,26 +61,54 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
 };
 
 /**
- * Regex engine that searches raw text layouts for total hour indicators
+ * Advanced Regex engine that handles explicit total values OR calculates 
+ * the sum of individual line item hour metrics automatically.
  */
 function parseHoursFromText(text) {
-  const lines = text.split('\n');
-  const structuralRegexes = [
-    /(?:total\s*hours|total|hours\s*worked|hours)\s*[:=-]?\s*(\d+(?:\.\d+)?)/i,
-    /(\d+(?:\.\d+)?)\s*(?:hrs|hours|total hours)/i
+  // Normalize and split text lines, removing blank fragments
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+  
+  // ⚡ PASS 1: Look for an explicit, pre-aggregated total row
+  const explicitTotalRegexes = [
+    /(?:total\s*hours|total|hours\s*worked)\s*[:=-]?\s*(\d+(?:\.\d+)?)/i,
+    /(\d+(?:\.\d+)?)\s*(?:total\s*hours|total\s*hrs)/i
   ];
 
   for (const line of lines) {
-    for (const regex of structuralRegexes) {
+    for (const regex of explicitTotalRegexes) {
       const match = line.match(regex);
       if (match && match[1]) {
         const foundHours = parseFloat(match[1]);
         if (foundHours > 0 && foundHours <= 200) {
+          console.log(`[OCR Pass 1 Match] Found explicit summary hours value: ${foundHours}`);
           return foundHours;
         }
       }
     }
   }
+
+  // ⚡ PASS 2: If no summary exists, pull and aggregate line-item row blocks ("40h", "32 hrs")
+  console.log("[OCR Pass 2 Initiated] Explicit total row missing. Running line-item extraction...");
+  let aggregatedSum = 0;
+  
+  // Looks for boundary-safe numbers attached to hour suffix notations
+  const lineItemRegex = /\b(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)\b/i;
+
+  for (const line of lines) {
+    const match = line.match(lineItemRegex);
+    if (match && match[1]) {
+      const value = parseFloat(match[1]);
+      aggregatedSum += value;
+      console.log(`[OCR Row Matched] Extracted line value: ${value} hrs (Current running sum: ${aggregatedSum})`);
+    }
+  }
+
+  // Validation boundary gate check before returning metrics
+  if (aggregatedSum > 0 && aggregatedSum <= 200) {
+    console.log(`[OCR Processing Complete] Combined calculation output: ${aggregatedSum} hrs`);
+    return aggregatedSum;
+  }
+
   return null;
 }
 
