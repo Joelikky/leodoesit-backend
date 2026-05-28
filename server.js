@@ -9,7 +9,29 @@ require('./scheduler');
 
 const app = express();
 
-// 🔥 Secure CORS Policy for Production
+// 🔥 FIX 1: Custom Interceptor to resolve browser CORS Preflight (OPTIONS) blocks instantly
+app.use((req, res, next) => {
+    // Dynamically catch allowed frontends
+    const allowedOrigins = ['http://localhost:5173', 'https://leodoesit-frontend.vercel.app'];
+    const origin = req.headers.origin;
+
+    if (allowedOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+    
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    // Ensure x-tenant-id is explicitly whitelisted for cross-origin requests
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-tenant-id');
+
+    // intercept OPTIONS method and return early before hitting internal app router paths
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
+// Standard library configuration rules
 app.use(cors({
   origin: [
     'http://localhost:5173',                  // Your local Vite React server
@@ -86,7 +108,6 @@ app.get('/api/test-db', async (req, res) => {
 });
 
 // 🔥 VERCEL COMPATIBILITY:
-// In local development, app.listen works. In Vercel, we must export the app.
 if (process.env.NODE_ENV !== 'production') {
     const PORT = process.env.PORT || 5000;
     app.listen(PORT, () => {
