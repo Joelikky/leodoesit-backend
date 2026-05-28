@@ -6,7 +6,6 @@ const db = require('./db');
 const app = express();
 
 // 🔥 FIX 1: CONDITIONAL SCHEDULER INITIALIZATION
-// Prevents the background loop engine from hijacking and killing Vercel serverless functions.
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
     try {
         require('./scheduler');
@@ -55,8 +54,20 @@ app.use('/api/users', require('./routes/users'));
 app.use('/api/timesheets', require('./routes/timesheets'));
 app.use('/api/clients', require('./routes/clients'));
 app.use('/api/invoices', require('./routes/invoices'));
-app.use('/api/sub_vendors', require('./routes/subVendors'));
 app.use('/api/auth', require('./routes/auth'));
+
+// 🔥 FIX 3: CASE-INSENSITIVE FALLBACK ROUTE TUNNEL
+// This guarantees that whether Git pushed the file filename as 'subVendors.js' or 'subvendors.js', Linux boots flawlessly without throwing a 500.
+app.use('/api/sub_vendors', (() => {
+    try {
+        return require('./routes/subvendors');
+    } catch (err) {
+        if (err.code === 'MODULE_NOT_FOUND') {
+            return require('./routes/subVendors');
+        }
+        throw err;
+    }
+})());
 
 // --- Update W2 Compliance Documents ---
 app.put('/api/contractors/:id/compliance', async (req, res) => {
