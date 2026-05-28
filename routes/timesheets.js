@@ -4,6 +4,9 @@ const db = require('../db');
 const multer = require('multer');
 const path = require('path');
 
+// 🔥 IMPORT THE SECURED OCR RUNTIME ENGINE
+const { extractHoursFromAttachment } = require('../utils/ocrEngine');
+
 // IMPORTED EMAILS INCLUDING THE REMINDER
 const { sendRejectionEmail, sendTimesheetSubmissionEmail, sendTimesheetApprovalEmail, sendTimesheetReminder } = require('../utils/mailer');
 
@@ -37,6 +40,7 @@ router.get('/', async (req, res) => {
   try {
     let query = `
       SELECT t.id, t.period_start, t.period_end, t.total_hours, t.status, t.screenshot_urls, t.user_id,
+             t.ocr_hours, t.ocr_mismatch,
              u.first_name, u.last_name, u.tenant_id, e.pay_rate, e.invoice_rate, e.vendor_name
       FROM timesheets t
       JOIN users u ON t.user_id = u.id
@@ -58,7 +62,7 @@ router.get('/', async (req, res) => {
     for (let ts of timesheets) {
         if (ts.screenshot_urls && ts.screenshot_urls.length > 0) {
             ts.screenshot_urls = await Promise.all(ts.screenshot_urls.map(async (key) => {
-                if (key.startsWith('http')) return key; // Keeps your old localhost tests working
+                if (key.startsWith('http')) return key; // Keeps old localhost tests working
                 return await generateSignedUrl(key);
             }));
         }
@@ -107,9 +111,10 @@ router.get('/me/:email', async (req, res) => {
   }
 });
 
-// 3. POST ROUTE: Submit a new timesheet WITH screenshots
+// 3. POST ROUTE: Submit a new timesheet WITH smart automated document OCR scanning
 router.post('/', upload.array('screenshots', 5), async (req, res) => {
   const { user_id, period_start, period_end, total_hours } = req.body;
+  const clientProvidedHours = parseFloat(total_hours || 0);
   
   // 🛡️ GUARDRAIL: Verify user_id is a valid UUID string
   if (!isValidUUID(user_id)) {
@@ -117,6 +122,28 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
   }
   
   try {
+    let detectedOcrHours = null;
+    let ocrMismatch = false;
+
+    // 🔥 AUTOMATED EXTRACTION STEP: Process raw file buffer right here out of RAM memory storage
+    if (req.files && req.files.length > 0) {
+      const primaryFile = req.files[0]; 
+      
+      console.log(`[OCR Processing Initialized] Scanning primary file attachment: ${primaryFile.originalname}`);
+      detectedOcrHours = await extractHoursFromAttachment(primaryFile.buffer, primaryFile.mimetype);
+      
+      if (detectedOcrHours !== null) {
+        console.log(`[OCR Match Complete] Successfully extracted hours value: ${detectedOcrHours}`);
+        // Cross-examine contractor payload form data with parsed file insights
+        if (Math.abs(clientProvidedHours - detectedOcrHours) > 0.01) {
+          ocrMismatch = true;
+          console.warn(`[OCR Discrepancy Found] User typed ${clientProvidedHours} but document sheet reveals ${detectedOcrHours}`);
+        }
+      } else {
+        console.log(`[OCR Info] Could not isolate structural timeline keywords inside uploaded file layout template.`);
+      }
+    }
+
     const screenshot_keys = [];
 
     // Upload each image directly to AWS S3 from RAM
@@ -132,12 +159,13 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
         }
     }
 
+    // Capture ocr_hours metrics inside the database transaction logs explicitly
     const query = `
-      INSERT INTO timesheets (user_id, period_start, period_end, total_hours, status, screenshot_urls)
-      VALUES ($1, $2, $3, $4, 'SUBMITTED', $5)
+      INSERT INTO timesheets (user_id, period_start, period_end, total_hours, status, screenshot_urls, ocr_hours, ocr_mismatch)
+      VALUES ($1, $2, $3, $4, 'SUBMITTED', $5, $6, $7)
       RETURNING *;
     `;
-    const values = [user_id, period_start, period_end, total_hours, screenshot_keys];
+    const values = [user_id, period_start, period_end, clientProvidedHours, screenshot_keys, detectedOcrHours, ocrMismatch];
     const result = await db.query(query, values);
     
     const userQuery = await db.query(`
@@ -158,10 +186,10 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
         const isGandiva = user.domain_prefix === 'gandiva';
         const adminEmail = isGandiva ? process.env.GANDIVA_EMAIL : (process.env.ADMIN_NOTIFY_EMAIL || process.env.EMAIL_USER);
 
-        await sendTimesheetSubmissionEmail(user.domain_prefix, user.email, adminEmail, contractorName, billingPeriod, total_hours);
+        await sendTimesheetSubmissionEmail(user.domain_prefix, user.email, adminEmail, contractorName, billingPeriod, clientProvidedHours);
     }
 
-    res.status(201).json({ success: true, data: result.rows[0] });
+    res.status(201).json({ success: true, data: blockDataCorrection(result.rows[0]) });
   } catch (err) {
     console.error("Upload Error:", err.message);
     res.status(500).json({ success: false, error: "Failed to submit timesheet." });
@@ -210,7 +238,7 @@ router.put('/:id/approve', async (req, res) => {
         console.log("⚠️ CHECKPOINT 2.5: WARNING! User query returned 0 rows. Skipping email.");
     }
 
-    res.json({ success: true, message: "Timesheet officially approved!", data: timesheet });
+    res.json({ success: true, message: "Timesheet officially approved!", data: blockDataCorrection(timesheet) });
   } catch (err) {
     console.error("🔥 FATAL ERROR IN APPROVE ROUTE:", err.message);
     res.status(500).json({ success: false, error: "Failed to approve timesheet." });
@@ -246,7 +274,7 @@ router.put('/:id/reject', async (req, res) => {
     
     await sendRejectionEmail(user.domain_prefix, user.email, contractorName, billingPeriod, rejection_reason);
 
-    res.json({ success: true, message: "Timesheet rejected and email sent!", data: timesheet });
+    res.json({ success: true, message: "Timesheet rejected and email sent!", data: blockDataCorrection(timesheet) });
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ success: false, error: "Failed to reject timesheet." });
@@ -265,20 +293,19 @@ router.put('/:id/void', async (req, res) => {
     
     if (result.rowCount === 0) return res.status(404).json({ success: false, error: "Timesheet not found" });
     
-    res.json({ success: true, message: "Timesheet voided back to the approval queue!", data: result.rows[0] });
+    res.json({ success: true, message: "Timesheet voided back to the approval queue!", data: blockDataCorrection(result.rows[0]) });
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ success: false, error: "Failed to void timesheet." });
   }
 });
 
-// 7. Master Status Updater (Checks tenant boundary via the sub-joined Users lookup)
+// 7. Master Status Updater
 router.put('/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status, admin_notes } = req.body;
   const tenant_id = req.headers['x-tenant-id'];
 
-  // 🛡️ GUARDRAILS: Check parameters and headers before firing SQL
   if (!isValidUUID(id)) return res.status(400).json({ success: false, error: "Invalid Timesheet UUID path parameter." });
   if (!isValidUUID(tenant_id)) return res.status(400).json({ success: false, error: "Missing or invalid tenant context layout header." });
 
@@ -327,14 +354,14 @@ router.put('/:id/status', async (req, res) => {
         console.log("⚠️ CHECKPOINT 2.5: WARNING! User query returned 0 rows. Skipping email.");
     }
 
-    res.json({ success: true, data: timesheet });
+    res.json({ success: true, data: blockDataCorrection(timesheet) });
   } catch (err) {
     console.error("🔥 FATAL ERROR IN STATUS ROUTE:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 8. Manual Reminder Trigger (Used by the "Remind" button)
+// 8. Manual Reminder Trigger
 router.post('/remind', async (req, res) => {
     const { email, first_name, month } = req.body;
     const tenant_id = req.headers['x-tenant-id'];
@@ -355,5 +382,11 @@ router.post('/remind', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
+// Internal utility placeholder to sanitize runtime responses safely
+function blockDataCorrection(row) {
+  if (!row) return row;
+  return row;
+}
 
 module.exports = router;
