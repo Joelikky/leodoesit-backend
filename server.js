@@ -9,40 +9,42 @@ require('./scheduler');
 
 const app = express();
 
-// 🔥 FIX 1: Custom Interceptor to resolve browser CORS Preflight (OPTIONS) blocks instantly
+// 🔥 FIX 1: Enforce Native CORS Handshaking at the ABSOLUTE Top of the Stack
+// This automatically captures and intercepts browser OPTIONS requests cleanly.
+app.use(cors({
+  origin: [
+    'http://localhost:5173',                  // Your local Vite React server
+    'https://leodoesit-frontend.vercel.app'   // 🔥 Your exact frontend Vercel production URL
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id'], // Whitelists your custom tenant headers
+  credentials: true,
+  optionsSuccessStatus: 200 // Forces legacy browser preflights to resolve with a clean 200 OK
+}));
+
+// 🔥 FIX 2: Double-Layer Fallback Interceptor
+// Ensures that if any serverless container skips the native cors pool, headers remain locked.
 app.use((req, res, next) => {
-    // Dynamically catch allowed frontends
     const allowedOrigins = ['http://localhost:5173', 'https://leodoesit-frontend.vercel.app'];
     const origin = req.headers.origin;
 
     if (allowedOrigins.includes(origin)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
     }
-    
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    // Ensure x-tenant-id is explicitly whitelisted for cross-origin requests
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-tenant-id');
 
-    // intercept OPTIONS method and return early before hitting internal app router paths
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
     next();
 });
 
-// Standard library configuration rules
-app.use(cors({
-  origin: [
-    'http://localhost:5173',                  // Your local Vite React server
-    'https://leodoesit-frontend.vercel.app'   // 🔥 YOUR EXACT VERCEL URL
-  ],
-  credentials: true
-}));
-
+// Parse body content safely
 app.use(express.json());
 
-// ✅ NEW: Added a root route to prevent "Cannot GET /" errors
+// ✅ Root route to confirm API status
 app.get('/', (req, res) => {
     res.send('🚀 Leodoesit Backend API is awake and running on Vercel!');
 });
