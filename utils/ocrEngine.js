@@ -1,7 +1,7 @@
 // utils/ocrEngine.js
 
 const Tesseract = require('tesseract.js');
-const pdfParse = require('pdf-parse');
+// 🔥 FIX: Removed global require('pdf-parse') from here to prevent Vercel boot crashes!
 
 // Patched SheetJS implementation deployment package via Option 1
 const XLSX = require('xlsx'); 
@@ -20,7 +20,6 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
     if (mimeType.includes('sheet') || mimeType.includes('excel') || mimeType.includes('officedocument.spreadsheetml')) {
       const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
       
-      // Concat text data from all spreadsheet columns & rows
       workbook.SheetNames.forEach(sheetName => {
         const sheet = workbook.Sheets[sheetName];
         extractedText += XLSX.utils.sheet_to_txt(sheet) + '\n';
@@ -29,9 +28,13 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
     
     // 2. Handle Document PDFs
     else if (mimeType === 'application/pdf') {
-      // 🔥 FIX: Supply a selective layout configuration object to suppress structural canvas matrix polyfills entirely
+      console.log("Lazy loading pdf-parse inside runtime execution container...");
+      
+      // 🔥 CRITICAL FIX: Load the package dynamically ONLY when a PDF is processed
+      const pdfParse = require('pdf-parse');
+      
       const options = {
-        pager: () => ({ text: "" }) 
+        pager: () => ({ text: "" }) // Suppresses canvas polyfill errors
       };
       
       const pdfData = await pdfParse(fileBuffer, options);
@@ -48,7 +51,7 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
 
     return parseHoursFromText(extractedText);
   } catch (error) {
-    console.error("OCR Extraction loop failed:", error);
+    console.error("OCR Extraction loop failed smoothly without crashing server:", error.message);
     return null;
   }
 };
@@ -57,10 +60,7 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
  * Regex engine that searches raw text layouts for total hour indicators
  */
 function parseHoursFromText(text) {
-  // Normalize and split text lines
   const lines = text.split('\n');
-  
-  // High-probability keywords used on contractor timesheet templates
   const structuralRegexes = [
     /(?:total\s*hours|total|hours\s*worked|hours)\s*[:=-]?\s*(\d+(?:\.\d+)?)/i,
     /(\d+(?:\.\d+)?)\s*(?:hrs|hours|total hours)/i
@@ -71,14 +71,12 @@ function parseHoursFromText(text) {
       const match = line.match(regex);
       if (match && match[1]) {
         const foundHours = parseFloat(match[1]);
-        // Basic sanity check: return hours if they sit within standard boundaries
         if (foundHours > 0 && foundHours <= 200) {
           return foundHours;
         }
       }
     }
   }
-
   return null;
 }
 
