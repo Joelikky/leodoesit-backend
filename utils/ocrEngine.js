@@ -23,16 +23,27 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       });
     }
     
-    // 2. Handle Document PDFs via Dynamic Intercept Import Engine
+    // 2. Handle Document PDFs using Stream Tokens (Zero Canvas/DOMMatrix Dependencies)
     else if (mimeType === 'application/pdf') {
-      console.log("[PDF Processing] Dynamically importing pure-js pdf-text-reader...");
+      console.log("[PDF Processing] Extracting strings using raw token buffers via pdfreader...");
       
-      // 🔥 FIX: Use dynamic import() to safely load the ES Module inside CommonJS
-      const { PdfTextReader } = await import('pdf-text-reader');
-      const pages = await PdfTextReader.readPdfPages({ buffer: fileBuffer });
+      const { PdfReader } = require('pdfreader');
       
-      pages.forEach(page => {
-        extractedText += page.lines.join('\n') + '\n';
+      // Wrap the asynchronous stream callback in a promise block
+      extractedText = await new Promise((resolve, reject) => {
+        let accumulatedText = "";
+        
+        new PdfReader().parseBuffer(fileBuffer, (err, item) => {
+          if (err) {
+            reject(err);
+          } else if (!item) {
+            // Stream completely finished when item evaluates as undefined
+            resolve(accumulatedText);
+          } else if (item.text) {
+            // Append token lines sequentially
+            accumulatedText += item.text + "\n";
+          }
+        });
       });
     }
     
@@ -65,6 +76,7 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
  * the sum of individual line item hour metrics automatically.
  */
 function parseHoursFromText(text) {
+  // Normalize and split text lines, removing blank fragments
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
   
   // ⚡ PASS 1: Look for an explicit, pre-aggregated total row
@@ -89,9 +101,12 @@ function parseHoursFromText(text) {
   // ⚡ PASS 2: If no summary exists, pull and aggregate cell text blocks ("40h", "32 hrs")
   console.log("[OCR Pass 2 Initiated] Explicit total row missing. Running line-item extraction...");
   let aggregatedSum = 0;
+  
+  // Loose pattern match without strict \b word boundaries to trap nested values cleanly like (40h)
   const looseRowRegex = /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)/i;
 
   for (const line of lines) {
+    // Sanitize string cells by scrubbing brackets and structural matrix characters
     const cleanLine = line.replace(/[()\[\]]/g, ''); 
     const match = cleanLine.match(looseRowRegex);
     
@@ -102,6 +117,7 @@ function parseHoursFromText(text) {
     }
   }
 
+  // Validation boundary gate check before returning metrics
   if (aggregatedSum > 0 && aggregatedSum <= 200) {
     console.log(`[OCR Processing Complete] Combined calculation output: ${aggregatedSum} hrs`);
     return aggregatedSum;

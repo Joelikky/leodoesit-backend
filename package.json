@@ -1,15 +1,20 @@
 {
   "name": "leodoesit-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Automated Multi-Tenant HR Invoicing, Timesheet Tracking and Notification Engine",
+  "main": "server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
-    "postinstall": "npx puppeteer browsers install chrome"
+    "dev": "nodemon server.js"
   },
-  "keywords": [],
+  "keywords": [
+    "express",
+    "postgresql",
+    "vercel",
+    "puppeteer",
+    "aws-s3"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
@@ -23,9 +28,8 @@
     "multer": "^2.1.1",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.4",
-    "pdf-parse": "^2.4.5",
-    "pdf-text-reader": "^5.1.1",
     "pdfkit": "^0.18.0",
+    "pdfreader": "^3.0.8",
     "pg": "^8.20.0",
     "puppeteer-core": "^22.15.0",
     "tesseract.js": "^7.0.0",
@@ -33,5 +37,15 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
+  },
+  "overrides": {
+    "pdfreader": {
+      "pdf2json": {
+        "lodash": "^4.17.21",
+        "async": "^3.2.4",
+        "ansi-regex": "^5.0.1",
+        "@xmldom/xmldom": "^0.8.12"
+      }
+    }
   }
 }
