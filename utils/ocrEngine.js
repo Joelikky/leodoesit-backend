@@ -22,7 +22,7 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       });
     }
     
-    // 2. Handle Document PDFs using Matrix Row Grouping
+    // 2. Handle Document PDFs using Matrix Row Grouping with OCR Failover
     else if (mimeType === 'application/pdf') {
       console.log("[PDF Processing] Reconstructing grid matrix positions via pdfreader...");
       
@@ -57,10 +57,30 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
         });
       });
 
-      console.log("=========================================");
-      console.log("[OCR MATRIX NORMALIZATION DUMP]:");
-      console.log(extractedText);
-      console.log("=========================================");
+      // 🔥 CRITICAL FAILOVER GATEWAY: If text layer extraction yields nothing, trigger Tesseract
+      if (!extractedText || extractedText.trim().length === 0) {
+        console.log("⚠️ [PDF Processing Warning] Text layer empty. Activating Tesseract OCR failover stream...");
+        
+        const worker = await createWorker('eng', 1, {
+          workerPath: 'https://unpkg.com/tesseract.js@v5.1.0/dist/worker.min.js',
+          corePath: 'https://unpkg.com/tesseract.js-core@v5.1.0/tesseract-core.wasm.js',
+          logger: m => console.log(`[PDF Failover OCR Progress]: ${m.status} -> ${(m.progress * 100).toFixed(0)}%`)
+        });
+
+        const { data: { text } } = await worker.recognize(fileBuffer);
+        extractedText = text;
+        await worker.terminate();
+        
+        console.log("=========================================");
+        console.log("[OCR FAILOVER EXTRACTED TEXT DUMP]:");
+        console.log(extractedText);
+        console.log("=========================================");
+      } else {
+        console.log("=========================================");
+        console.log("[OCR MATRIX NORMALIZATION DUMP]:");
+        console.log(extractedText);
+        console.log("=========================================");
+      }
     }
     
     // 3. Handle Images (PNG, JPEG) via Cloud-Decoupled OCR Engine
@@ -117,7 +137,6 @@ function parseHoursFromText(text) {
   console.log("[OCR Pass 2 Initiated] Explicit total row missing. Running line-item extraction...");
   let aggregatedSum = 0;
   
-  // Captures explicit strings like "40h", or numbers matching standalone hours patterns
   const looseRowRegex = /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?/i;
 
   for (const line of lines) {
