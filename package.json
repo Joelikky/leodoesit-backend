@@ -24,6 +24,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.4",
     "pdf-parse": "^2.4.5",
+    "pdf-text-reader": "^5.1.1",
     "pdfkit": "^0.18.0",
     "pg": "^8.20.0",
     "puppeteer-core": "^22.15.0",

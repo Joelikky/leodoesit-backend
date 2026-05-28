@@ -23,13 +23,16 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       });
     }
     
-    // 2. Handle Document PDFs
+    // 2. Handle Document PDFs via Pure-JS Stream Reader (Bypasses DOMMatrix completely)
     else if (mimeType === 'application/pdf') {
-      console.log("Lazy loading pdf-parse inside runtime execution container...");
-      const pdfParse = require('pdf-parse');
-      const options = { pager: () => ({ text: "" }) };
-      const pdfData = await pdfParse(fileBuffer, options);
-      extractedText = pdfData.text;
+      console.log("[PDF Processing] Extracting raw strings safely via pdf-text-reader...");
+      
+      const { PdfTextReader } = require('pdf-text-reader');
+      const pages = await PdfTextReader.readPdfPages({ buffer: fileBuffer });
+      
+      pages.forEach(page => {
+        extractedText += page.lines.join('\n') + '\n';
+      });
     }
     
     // 3. Handle Images (PNG, JPEG) via Cloud-Decoupled OCR Engine
@@ -87,15 +90,18 @@ function parseHoursFromText(text) {
     }
   }
 
-  // ⚡ PASS 2: If no summary exists, pull and aggregate line-item row blocks ("40h", "32 hrs")
+  // ⚡ PASS 2: If no summary exists, pull and aggregate cell text blocks ("40h", "32 hrs")
   console.log("[OCR Pass 2 Initiated] Explicit total row missing. Running line-item extraction...");
   let aggregatedSum = 0;
   
-  // Looks for boundary-safe numbers attached to hour suffix notations
-  const lineItemRegex = /\b(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)\b/i;
+  // Loose pattern match without strict \b word boundaries to trap nested values cleanly like (40h)
+  const looseRowRegex = /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)/i;
 
   for (const line of lines) {
-    const match = line.match(lineItemRegex);
+    // Sanitize string cells by scrubbing brackets and structural matrix characters
+    const cleanLine = line.replace(/[()\[\]]/g, ''); 
+    const match = cleanLine.match(looseRowRegex);
+    
     if (match && match[1]) {
       const value = parseFloat(match[1]);
       aggregatedSum += value;
