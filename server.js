@@ -3,27 +3,22 @@ const cors = require('cors');
 require('dotenv').config();
 const db = require('./db'); 
 
-// --- ADD THE SCHEDULER RIGHT HERE ---
-require('./scheduler');
-// ------------------------------------
-
 const app = express();
 
-// 🔥 FIX 1: Enforce Native CORS Handshaking at the ABSOLUTE Top of the Stack
-// This automatically captures and intercepts browser OPTIONS requests cleanly.
-app.use(cors({
-  origin: [
-    'http://localhost:5173',                  // Your local Vite React server
-    'https://leodoesit-frontend.vercel.app'   // 🔥 Your exact frontend Vercel production URL
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-tenant-id'], // Whitelists your custom tenant headers
-  credentials: true,
-  optionsSuccessStatus: 200 // Forces legacy browser preflights to resolve with a clean 200 OK
-}));
+// 🔥 FIX 1: CONDITIONAL SCHEDULER INITIALIZATION
+// Prevents the background loop engine from hijacking and killing Vercel serverless functions.
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+    try {
+        require('./scheduler');
+        console.log('✅ Local Scheduler initialized successfully.');
+    } catch (e) {
+        console.error('Failed to load local scheduler:', e);
+    }
+} else {
+    console.log('ℹ️ Running in Serverless/Production environment. Background cron thread safely deferred.');
+}
 
-// 🔥 FIX 2: Double-Layer Fallback Interceptor
-// Ensures that if any serverless container skips the native cors pool, headers remain locked.
+// 🔥 FIX 2: Explicit Top-Tier Preflight Interceptor Middleware
 app.use((req, res, next) => {
     const allowedOrigins = ['http://localhost:5173', 'https://leodoesit-frontend.vercel.app'];
     const origin = req.headers.origin;
@@ -32,39 +27,35 @@ app.use((req, res, next) => {
         res.setHeader('Access-Control-Allow-Origin', origin);
     }
     res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-tenant-id');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization, x-tenant-id');
 
+    // Intercept OPTIONS requests instantly before they touch routers or middleware
     if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
+        return res.sendStatus(200); 
     }
     next();
 });
 
-// Parse body content safely
+// Standard library middleware rules
+app.use(cors({
+  origin: ['http://localhost:5173', 'https://leodoesit-frontend.vercel.app'],
+  credentials: true
+}));
+
 app.use(express.json());
 
-// ✅ Root route to confirm API status
+// Base diagnostic endpoint
 app.get('/', (req, res) => {
     res.send('🚀 Leodoesit Backend API is awake and running on Vercel!');
 });
 
 // --- ROUTES ---
-const userRoutes = require('./routes/users');
-app.use('/api/users', userRoutes);
-
-const timesheetRoutes = require('./routes/timesheets');
-app.use('/api/timesheets', timesheetRoutes);
-
-const clientRoutes = require('./routes/clients');
-app.use('/api/clients', clientRoutes);
-
-const invoiceRoutes = require('./routes/invoices');
-app.use('/api/invoices', invoiceRoutes);
-
-const subVendorRoutes = require('./routes/subVendors');
-app.use('/api/sub_vendors', subVendorRoutes);
-
+app.use('/api/users', require('./routes/users'));
+app.use('/api/timesheets', require('./routes/timesheets'));
+app.use('/api/clients', require('./routes/clients'));
+app.use('/api/invoices', require('./routes/invoices'));
+app.use('/api/sub_vendors', require('./routes/subVendors'));
 app.use('/api/auth', require('./routes/auth'));
 
 // --- Update W2 Compliance Documents ---
@@ -109,7 +100,7 @@ app.get('/api/test-db', async (req, res) => {
   }
 });
 
-// 🔥 VERCEL COMPATIBILITY:
+// Local dev engine fallback loop
 if (process.env.NODE_ENV !== 'production') {
     const PORT = process.env.PORT || 5000;
     app.listen(PORT, () => {
@@ -117,4 +108,4 @@ if (process.env.NODE_ENV !== 'production') {
     });
 }
 
-module.exports = app; // 🚀 Required for Vercel deployment
+module.exports = app;
