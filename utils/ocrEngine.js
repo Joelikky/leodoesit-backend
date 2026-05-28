@@ -3,8 +3,7 @@
 const Tesseract = require('tesseract.js');
 const pdfParse = require('pdf-parse');
 
-// 🔥 FIX: Import the safe, patched SheetJS deployment package 
-// (Works perfectly with both Option 1 and Option 2 installation rules)
+// Patched SheetJS implementation deployment package via Option 1
 const XLSX = require('xlsx'); 
 
 /**
@@ -30,7 +29,12 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
     
     // 2. Handle Document PDFs
     else if (mimeType === 'application/pdf') {
-      const pdfData = await pdfParse(fileBuffer);
+      // 🔥 FIX: Supply a selective layout configuration object to suppress structural canvas matrix polyfills entirely
+      const options = {
+        pager: () => ({ text: "" }) 
+      };
+      
+      const pdfData = await pdfParse(fileBuffer, options);
       extractedText = pdfData.text;
     }
     
