@@ -8,31 +8,25 @@ const XLSX = require('xlsx');
  */
 const createSafeWorker = async () => {
   const worker = await createWorker('eng', 1, {
-    // =========================
-    // VERCEL SAFE WORKER PATH
-    // =========================
-    workerPath: 'https://unpkg.com/tesseract.js@5.0.4/dist/worker.min.js',
+    // =========================================================================
+    // 🔥 FIXED CLOUD ROUTING: Removed external unpkg URLs for workerPath/corePath
+    // This forces Node to safely load the absolute native worker paths out of node_modules.
+    // =========================================================================
 
     // =========================
-    // VERCEL SAFE WASM CORE
-    // =========================
-    corePath: 'https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js',
-
-    // =========================
-    // LANGUAGE FILES
+    // LANGUAGE FILES (CDN Only)
     // =========================
     langPath: 'https://tessdata.projectnaptha.com/4.0.0',
 
     // =========================
-    // DEBUG LOGGER
+    // DEBUG LOGGER & OPTIMIZATIONS
     // =========================
-    logger: m => console.log(m),
-
+    logger: m => console.log(`[Tesseract Core]: ${m.status} -> ${(m.progress * 100 || 0).toFixed(0)}%`),
     cacheMethod: 'readOnly',
     gzip: false,
 
     // =========================================================================
-    // 🔥 VERCEL ENVIRONMENTAL OVERRIDES
+    // SERVERLESS ENVIRONMENT FALLBACK FLAGS
     // =========================================================================
     legacyCore: true,   // Forces standard JS-WASM fallbacks (Bypasses missing relaxedsimd.wasm binaries)
     legacyLang: true    // Normalizes language translation memory buffers inside ephemeral nodes
@@ -147,12 +141,10 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       console.log("=========================================");
     }
 
-    // Nothing extracted
     if (!extractedText) {
       return null;
     }
 
-    // Parse extracted text to isolate metric aggregates
     return parseHoursFromText(extractedText);
 
   } catch (error) {
@@ -197,7 +189,6 @@ function parseHoursFromText(text) {
   const looseRowRegex = /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?/i;
 
   for (const line of lines) {
-    // Ignore lines that contain date ranges, URLs, or table headers to avoid counting dates as hours
     if (
       line.includes('/') ||
       line.includes('-') ||
@@ -211,7 +202,6 @@ function parseHoursFromText(text) {
 
     if (match && match[1]) {
       const value = parseFloat(match[1]);
-      // Only aggregate typical weekly increments (between 4 and 60 hours per row entry)
       if (value >= 4 && value <= 60) {
         aggregatedSum += value;
         console.log(`[OCR Row Matched] Extracted line value: ${value} hrs (Current running sum: ${aggregatedSum})`);
@@ -219,9 +209,6 @@ function parseHoursFromText(text) {
     }
   }
 
-  // =====================================
-  // FINAL VALIDATION BOUNDARY GATE
-  // =====================================
   if (aggregatedSum > 0 && aggregatedSum <= 200) {
     console.log(`[OCR Processing Complete] Combined calculation output: ${aggregatedSum} hrs`);
     return aggregatedSum;
