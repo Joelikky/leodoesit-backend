@@ -32,7 +32,6 @@
     "pdfreader": "^3.0.8",
     "pg": "^8.20.0",
     "puppeteer-core": "^22.15.0",
-    "tesseract.js": "^7.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
