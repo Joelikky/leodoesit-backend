@@ -5,7 +5,9 @@ const db = require('./db');
 
 const app = express();
 
-// 🔥 FIX 1: CONDITIONAL SCHEDULER INITIALIZATION
+// ==========================================
+// 🚀 CONDITIONAL SCHEDULER INITIALIZATION
+// ==========================================
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
     try {
         require('./scheduler');
@@ -17,9 +19,16 @@ if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
     console.log('ℹ️ Running in Serverless/Production environment. Background cron thread safely deferred.');
 }
 
-// 🔥 FIX 2: Explicit Top-Tier Preflight Interceptor Middleware
+// ==========================================
+// 🛡️ EXPLICIT TOP-TIER PREFLIGHT INTERCEPTOR (UPDATED DOMAIN)
+// ==========================================
 app.use((req, res, next) => {
-    const allowedOrigins = ['http://localhost:5173', 'https://leodoesit-frontend.vercel.app'];
+    // 🔥 Added your new white-labeled production domain to the array below
+    const allowedOrigins = [
+        'http://localhost:5173', 
+        'https://leodoesit-frontend.vercel.app',
+        'https://hr-automation-portal.vercel.app'
+    ];
     const origin = req.headers.origin;
 
     if (allowedOrigins.includes(origin)) {
@@ -36,9 +45,16 @@ app.use((req, res, next) => {
     next();
 });
 
-// Standard library middleware rules
+// ==========================================
+// 🎨 STANDARD CORS CONFIGURATION (UPDATED DOMAIN)
+// ==========================================
 app.use(cors({
-  origin: ['http://localhost:5173', 'https://leodoesit-frontend.vercel.app'],
+  // 🔥 Added your new white-labeled production domain here as well
+  origin: [
+      'http://localhost:5173', 
+      'https://leodoesit-frontend.vercel.app',
+      'https://hr-automation-portal.vercel.app'
+  ],
   credentials: true
 }));
 
@@ -46,7 +62,7 @@ app.use(express.json());
 
 // Base diagnostic endpoint
 app.get('/', (req, res) => {
-    res.send('🚀 Leodoesit Backend API is awake and running on Vercel!');
+    res.send('🚀 HR Automation Backend API is awake and running on Vercel!');
 });
 
 // --- ROUTES ---
@@ -56,8 +72,7 @@ app.use('/api/clients', require('./routes/clients'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/auth', require('./routes/auth'));
 
-// 🔥 FIX 3: CASE-INSENSITIVE FALLBACK ROUTE TUNNEL
-// This guarantees that whether Git pushed the file filename as 'subVendors.js' or 'subvendors.js', Linux boots flawlessly without throwing a 500.
+// CASE-INSENSITIVE FALLBACK ROUTE TUNNEL
 app.use('/api/sub_vendors', (() => {
     try {
         return require('./routes/subvendors');
@@ -102,7 +117,7 @@ app.get('/api/test-db', async (req, res) => {
     const result = await db.query('SELECT NOW()');
     res.json({ 
       success: true, 
-      message: "Supabase connection successful! The Leodoes It engine is live.", 
+      message: "Supabase connection successful! The HR Automation engine is live.", 
       time: result.rows[0].now 
     });
   } catch (err) {
