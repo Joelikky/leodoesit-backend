@@ -170,8 +170,7 @@ const sendTimesheetReminder = async (tenantPrefix, contractorEmail, contractorNa
         const isGandiva = tenantPrefix === 'gandiva';
         const transporter = getTransporter(isGandiva);
         const fromEmail = isGandiva ? process.env.GANDIVA_EMAIL : process.env.EMAIL_USER;
-        const portalUrl = "https://leodoesit-frontend.vercel.app/";
-        
+        const portalUrl = "https://hr-automation-portal.vercel.app/";        
         // Dynamic styling for the button based on tenant branding
         const btnColor = isGandiva ? '#1E40AF' : '#10B981'; 
 
@@ -214,7 +213,7 @@ const sendRejectionEmail = async (tenantPrefix, contractorEmail, contractorName,
         const isGandiva = tenantPrefix === 'gandiva';
         const transporter = getTransporter(isGandiva); 
         const fromEmail = isGandiva ? process.env.GANDIVA_EMAIL : process.env.EMAIL_USER;
-        const portalUrl = "https://leodoesit-frontend.vercel.app/";
+        const portalUrl = "https://hr-automation-portal.vercel.app/";
         const btnColor = isGandiva ? '#1E40AF' : '#10B981';
 
         const htmlContent = `
