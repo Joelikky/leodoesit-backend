@@ -1,3 +1,5 @@
+// utils/mailer.js
+
 const nodemailer = require('nodemailer');
 const path = require('path');
 
@@ -106,7 +108,6 @@ const sendInvoiceEmail = async (tenantPrefix, clientEmail, contractorName, month
             </div>
         `;
 
-        // 🛠️ FIX: Using the raw memory storage buffer directly to bypass localhost container port-80 mapping bottlenecks
         const attachments = [
             { 
                 filename: `Invoice_${invoiceNumber}.pdf`, 
@@ -169,12 +170,24 @@ const sendTimesheetReminder = async (tenantPrefix, contractorEmail, contractorNa
         const isGandiva = tenantPrefix === 'gandiva';
         const transporter = getTransporter(isGandiva);
         const fromEmail = isGandiva ? process.env.GANDIVA_EMAIL : process.env.EMAIL_USER;
+        const portalUrl = "https://leodoesit-frontend.vercel.app/";
+        
+        // Dynamic styling for the button based on tenant branding
+        const btnColor = isGandiva ? '#1E40AF' : '#10B981'; 
 
         const htmlContent = `
             <div style="font-family: Arial, sans-serif; color: #222; font-size: 14px; line-height: 1.6; max-width: 600px;">
                 <p>Hi ${contractorName},</p>
                 <p>This is an automated reminder that your timesheet for <strong>${monthName}</strong> is currently pending.</p>
-                <p>Please submit your approved timesheet at your earliest convenience so we can ensure timely processing of your invoice.</p>
+                <p>Please click the button below to log into the portal and submit your approved timesheet at your earliest convenience so we can ensure timely processing of your invoice.</p>
+                
+                <div style="margin: 25px 0; text-align: left;">
+                    <a href="${portalUrl}" 
+                       style="background-color: ${btnColor}; color: white; text-decoration: none; padding: 12px 24px; font-weight: bold; border-radius: 6px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                       + Submit Your Timesheet
+                    </a>
+                </div>
+                
                 <p>Thank you!</p>
                 ${isGandiva ? gandivaSignature : leodoesitSignature}
             </div>`;
@@ -201,6 +214,8 @@ const sendRejectionEmail = async (tenantPrefix, contractorEmail, contractorName,
         const isGandiva = tenantPrefix === 'gandiva';
         const transporter = getTransporter(isGandiva); 
         const fromEmail = isGandiva ? process.env.GANDIVA_EMAIL : process.env.EMAIL_USER;
+        const portalUrl = "https://leodoesit-frontend.vercel.app/";
+        const btnColor = isGandiva ? '#1E40AF' : '#10B981';
 
         const htmlContent = `
             <div style="font-family: Arial, sans-serif; color: #222; font-size: 14px; line-height: 1.6; max-width: 600px;">
@@ -209,7 +224,15 @@ const sendRejectionEmail = async (tenantPrefix, contractorEmail, contractorName,
                 <div style="background-color: #FEF2F2; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #EF4444;">
                     <p style="margin: 0; color: #991B1B;"><strong>Reason for Rejection:</strong> ${rejectionReason}</p>
                 </div>
-                <p>Please log into your portal to review, make the necessary corrections, and resubmit.</p>
+                <p>Please click the button below to log into your portal, review the notes, make the necessary corrections, and resubmit.</p>
+                
+                <div style="margin: 25px 0; text-align: left;">
+                    <a href="${portalUrl}" 
+                       style="background-color: ${btnColor}; color: white; text-decoration: none; padding: 12px 24px; font-weight: bold; border-radius: 6px; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                       Fix & Resubmit Timesheet
+                    </a>
+                </div>
+                
                 <p>Thank you,</p>
                 ${isGandiva ? gandivaSignature : leodoesitSignature}
             </div>`;
