@@ -149,11 +149,11 @@ function parseHoursFromText(text) {
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
 
   // =====================================
-  // PASS 1: EXPLICIT TOTALS
+  // PASS 1: EXPLICIT TOTALS (HARDENED REGEX BLOCKS)
   // =====================================
   const explicitTotalRegexes = [
-    /(?:total\s*hours|total|hours\s*worked)\s*[:=-]?\s*(\d+(?:\.\d+)?)/i,
-    /(\d+(?:\.\d+)?)\s*(?:total\s*hours|total\s*hrs)/i
+    /(?:total\s*hours|total\s*hrs|total|hours\s*worked)\s*[:=\-_]?\s*(\d+(?:\.\d+)?)/i,
+    /(\d+(?:\.\d+)?)\s*(?:total\s*hours|total\s*hrs|hours\s*total)/i
   ];
 
   for (const line of lines) {
@@ -170,18 +170,22 @@ function parseHoursFromText(text) {
   }
 
   // =====================================
-  // PASS 2: ROW SUMMATION
+  // PASS 2: ROW SUMMATION (STRICT BOUNDARY SECURITY)
   // =====================================
   console.log("[OCR Pass 2 Initiated] Explicit total row missing. Running line-item extraction...");
   let aggregatedSum = 0;
 
-  const looseRowRegex = /(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?/i;
+  // Isolates floating points or plain digits while checking for absolute boundaries
+  const looseRowRegex = /(?:^|\s)(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?(?:\s|$)/i;
 
   for (const line of lines) {
+    // 🛡️ SECURITY SHIELD: Bypass dates, ranges, text indices, or time-stamps (e.g., "10:30")
     if (
       line.includes('/') ||
       line.includes('-') ||
-      line.toLowerCase().includes('billing')
+      line.includes(':') ||
+      line.toLowerCase().includes('billing') ||
+      line.toLowerCase().includes('invoice')
     ) {
       continue;
     }
@@ -191,6 +195,7 @@ function parseHoursFromText(text) {
 
     if (match && match[1]) {
       const value = parseFloat(match[1]);
+      // Only aggregate standard tracking rows (between 4 and 60 hours per work period log)
       if (value >= 4 && value <= 60) {
         aggregatedSum += value;
         console.log(`[OCR Row Matched] Extracted line value: ${value} hrs (Current running sum: ${aggregatedSum})`);
