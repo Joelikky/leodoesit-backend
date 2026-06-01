@@ -1,39 +1,6 @@
 // utils/ocrEngine.js
 
-const { createWorker } = require('tesseract.js');
 const XLSX = require('xlsx');
-
-/**
- * Create Vercel-safe OCR worker
- */
-const createSafeWorker = async () => {
-  const worker = await createWorker('eng', 1, {
-    // =========================================================================
-    // 🔥 FIXED CLOUD ROUTING: Removed external unpkg URLs for workerPath/corePath
-    // This forces Node to safely load the absolute native worker paths out of node_modules.
-    // =========================================================================
-
-    // =========================
-    // LANGUAGE FILES (CDN Only)
-    // =========================
-    langPath: 'https://tessdata.projectnaptha.com/4.0.0',
-
-    // =========================
-    // DEBUG LOGGER & OPTIMIZATIONS
-    // =========================
-    logger: m => console.log(`[Tesseract Core]: ${m.status} -> ${(m.progress * 100 || 0).toFixed(0)}%`),
-    cacheMethod: 'readOnly',
-    gzip: false,
-
-    // =========================================================================
-    // SERVERLESS ENVIRONMENT FALLBACK FLAGS
-    // =========================================================================
-    legacyCore: true,   // Forces standard JS-WASM fallbacks (Bypasses missing relaxedsimd.wasm binaries)
-    legacyLang: true    // Normalizes language translation memory buffers inside ephemeral nodes
-  });
-
-  return worker;
-};
 
 /**
  * Extract hours from uploaded files
@@ -102,20 +69,11 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       });
 
       // =====================================
-      // PDF OCR FAILOVER GATEWAY
+      // PDF OCR FAILOVER VIA LIGHTWEIGHT CLOUD FETCH
       // =====================================
       if (!extractedText || extractedText.trim().length === 0) {
-        console.log("⚠️ PDF text layer empty. Activating Tesseract OCR failover stream...");
-
-        const worker = await createSafeWorker();
-        const { data: { text } } = await worker.recognize(fileBuffer);
-        extractedText = text;
-        await worker.terminate();
-
-        console.log("=========================================");
-        console.log("[OCR FAILOVER EXTRACTED TEXT DUMP]:");
-        console.log(extractedText);
-        console.log("=========================================");
+        console.log("⚠️ PDF text layer empty. Activating high-speed Cloud OCR gateway...");
+        extractedText = await callCloudOCR(fileBuffer, 'application/pdf');
       } else {
         console.log("=========================================");
         console.log("[OCR MATRIX NORMALIZATION DUMP]:");
@@ -128,17 +86,8 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
     // 3. IMAGE FILES
     // =====================================
     else if (mimeType.startsWith('image/')) {
-      console.log("[OCR IMAGE MODE] Initializing cloud-safe worker paths...");
-
-      const worker = await createSafeWorker();
-      const { data: { text } } = await worker.recognize(fileBuffer);
-      extractedText = text;
-      await worker.terminate();
-
-      console.log("=========================================");
-      console.log("[OCR IMAGE TEXT DUMP]:");
-      console.log(extractedText);
-      console.log("=========================================");
+      console.log("[OCR IMAGE MODE] Dispatching buffer payload to Cloud OCR...");
+      extractedText = await callCloudOCR(fileBuffer, mimeType);
     }
 
     if (!extractedText) {
@@ -152,6 +101,46 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
     return null;
   }
 };
+
+/**
+ * Zero-dependency Cloud OCR engine fallback helper
+ */
+async function callCloudOCR(fileBuffer, mimeType) {
+  try {
+    const base64File = fileBuffer.toString('base64');
+    const dataURI = `data:${mimeType};base64,${base64File}`;
+
+    const formData = new URLSearchParams();
+    formData.append('base64Image', dataURI);
+    formData.append('apikey', process.env.OCR_SPACE_API_KEY || 'dontshareyourkey');
+    formData.append('language', 'eng');
+    formData.append('isOverlayRequired', 'false');
+    formData.append('scale', 'true');
+
+    const response = await fetch('https://api.ocr.space/parse/image', {
+      method: 'POST',
+      body: formData,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
+
+    const result = await response.json();
+    
+    if (result.ParsedResults && result.ParsedResults[0]) {
+      const textOutput = result.ParsedResults[0].ParsedText;
+      console.log("=========================================");
+      console.log("[CLOUD OCR SUCCESSFUL TEXT PAYLOAD DUMP]:");
+      console.log(textOutput);
+      console.log("=========================================");
+      return textOutput;
+    }
+    
+    console.warn("Cloud OCR returned an empty response structure:", result);
+    return "";
+  } catch (err) {
+    console.error("Cloud OCR API fetching error channel broke down:", err.message);
+    return "";
+  }
+}
 
 /**
  * Parse hours intelligently
