@@ -149,7 +149,7 @@ function parseHoursFromText(text) {
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
 
   // =========================================================================
-  // PASS 1: MULTI-PAGE TOTALS ACCUMULATION (FIXED SINGLE MATCH BREAK)
+  // PASS 1: SAFE MULTI-PAGE SHEET TOTAL ACCUMULATOR
   // =========================================================================
   const explicitTotalRegexes = [
     /(?:total\s*hours|total\s*hrs|total|hours\s*worked)\s*[:=\-_]?\s*(\d+(?:\.\d+)?)/i,
@@ -160,41 +160,38 @@ function parseHoursFromText(text) {
   let hasFoundExplicitTotals = false;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    // Construct a rolling text evaluation frame combining line (i) and optionally line (i+1)
+    // This perfectly collapses multi-line text splits into a single scannable string frame
+    const currentLine = lines[i];
+    const nextLine = (i + 1 < lines.length) ? lines[i + 1] : "";
+    const evaluationFrame = `${currentLine} ${nextLine}`.trim();
 
-    // Skip timestamp fields containing clock metadata (e.g. "5:34 PM")
-    if (line.includes(':') && (line.toLowerCase().includes('pm') || line.toLowerCase().includes('am'))) {
+    // Skip time fields containing clock signatures (e.g. "5:34 PM")
+    if (currentLine.includes(':') && (currentLine.toLowerCase().includes('pm') || currentLine.toLowerCase().includes('am'))) {
       continue;
     }
 
     let matchFoundForCurrentLine = false;
 
     for (const regex of explicitTotalRegexes) {
-      const match = line.match(regex);
+      // First test against the unified evaluation frame
+      const match = evaluationFrame.match(regex);
       if (match && match[1]) {
         const foundHours = parseFloat(match[1]);
         
-        // Strict boundary validation parameters
+        // Ensure values correspond to a weekly period boundary sheet (between 4 and 60 hours)
         if (foundHours > 0 && foundHours <= 60) {
           accumulatedTotalHours += foundHours;
           hasFoundExplicitTotals = true;
           matchFoundForCurrentLine = true;
           console.log(`[OCR Multi-Page Tracer] Week sheet match: +${foundHours} hrs (Running total: ${accumulatedTotalHours})`);
-          break; // 🔥 CRITICAL FIX: Stops testing secondary regexes against this same line!
-        }
-      }
-    }
-
-    // 🔥 COVERAGE UPGRADE: Catch standalone split values from multi-line stacks (e.g., Page 5 "Total" -> "8.00")
-    if (!matchFoundForCurrentLine && line.toLowerCase() === 'total' && i + 1 < lines.length) {
-      const nextLine = lines[i + 1];
-      if (/^\d+(?:\.\d+)?$/.test(nextLine)) {
-        const foundHours = parseFloat(nextLine);
-        if (foundHours > 0 && foundHours <= 60) {
-          accumulatedTotalHours += foundHours;
-          hasFoundExplicitTotals = true;
-          console.log(`[OCR Multi-Page Split Match] Standalone total segment catch: +${foundHours} hrs (Running total: ${accumulatedTotalHours})`);
-          i++; // Advance past index to skip reading the numeric row independently
+          
+          // If the match consumed the trailing look-ahead row text explicitly,
+          // step the master index forward safely without creating evaluation frame skips
+          if (!currentLine.match(regex) && nextLine && evaluationFrame.match(regex)) {
+            i++;
+          }
+          break; 
         }
       }
     }
