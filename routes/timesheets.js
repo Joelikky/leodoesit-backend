@@ -4,7 +4,7 @@ const db = require('../db');
 const multer = require('multer');
 const path = require('path');
 
-// 🔥 IMPORT THE SECURED OCR RUNTIME ENGINE
+// IMPORT THE SECURED OCR RUNTIME ENGINE
 const { extractHoursFromAttachment } = require('../utils/ocrEngine');
 
 // IMPORTED EMAILS INCLUDING THE REMINDER
@@ -125,7 +125,7 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
     let detectedOcrHours = null;
     let ocrMismatch = false;
 
-    // 🔥 AUTOMATED EXTRACTION STEP: Process raw file buffer right here out of RAM memory storage
+    // AUTOMATED EXTRACTION STEP: Process raw file buffer right here out of RAM memory storage
     if (req.files && req.files.length > 0) {
       const primaryFile = req.files[0]; 
       
@@ -137,7 +137,15 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
         // Cross-examine contractor payload form data with parsed file insights
         if (Math.abs(clientProvidedHours - detectedOcrHours) > 0.01) {
           ocrMismatch = true;
-          console.warn(`[OCR Discrepancy Found] User typed ${clientProvidedHours} but document sheet reveals ${detectedOcrHours}`);
+          console.warn(`[OCR Discrepancy Found] User typed ${clientProvidedHours} but document reveals ${detectedOcrHours}`);
+          
+          // =========================================================================
+          // 🧠 OPTION A: STRICT MODE REJECTION (UNCOMMENT IF YOU WANT TO BLOCK SUBMISSION)
+          // =========================================================================
+          // return res.status(400).json({
+          //   success: false,
+          //   error: `Verification Discrepancy! You entered ${clientProvidedHours} hours, but your uploaded timesheet document contains ${detectedOcrHours} hours. Please check your file and try again.`
+          // });
         }
       } else {
         console.log(`[OCR Info] Could not isolate structural timeline keywords inside uploaded file layout template.`);
@@ -189,7 +197,14 @@ router.post('/', upload.array('screenshots', 5), async (req, res) => {
         await sendTimesheetSubmissionEmail(user.domain_prefix, user.email, adminEmail, contractorName, billingPeriod, clientProvidedHours);
     }
 
-    res.status(201).json({ success: true, data: blockDataCorrection(result.rows[0]) });
+    // 🔥 OPTION B: RETURN WARNING ON SUCCESS (Lets submission go through but warns user)
+    res.status(201).json({ 
+      success: true, 
+      ocrMismatchDetected: ocrMismatch,
+      extractedOcrHours: detectedOcrHours,
+      data: blockDataCorrection(result.rows[0]) 
+    });
+
   } catch (err) {
     console.error("Upload Error:", err.message);
     res.status(500).json({ success: false, error: "Failed to submit timesheet." });
