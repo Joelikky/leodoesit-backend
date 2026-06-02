@@ -149,9 +149,7 @@ function parseHoursFromText(text) {
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
 
   // =========================================================================
-  // PASS 1: MULTI-PAGE TOTALS ACCUMULATION (FIXED)
-  // Loops through the entire text block to add up multiple sub-totals 
-  // instead of returning early on the first match.
+  // PASS 1: MULTI-PAGE TOTALS ACCUMULATION (FIXED SINGLE MATCH BREAK)
   // =========================================================================
   const explicitTotalRegexes = [
     /(?:total\s*hours|total\s*hrs|total|hours\s*worked)\s*[:=\-_]?\s*(\d+(?:\.\d+)?)/i,
@@ -161,28 +159,48 @@ function parseHoursFromText(text) {
   let accumulatedTotalHours = 0;
   let hasFoundExplicitTotals = false;
 
-  for (const line of lines) {
-    // Skip timestamp fields containing colons (e.g. "5:34 PM") to avoid false evaluation triggers
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Skip timestamp fields containing clock metadata (e.g. "5:34 PM")
     if (line.includes(':') && (line.toLowerCase().includes('pm') || line.toLowerCase().includes('am'))) {
       continue;
     }
+
+    let matchFoundForCurrentLine = false;
 
     for (const regex of explicitTotalRegexes) {
       const match = line.match(regex);
       if (match && match[1]) {
         const foundHours = parseFloat(match[1]);
         
-        // Strict baseline: Ignore 0-hour segments or year stamps (e.g. 2026) accidentally picked up
+        // Strict boundary validation parameters
         if (foundHours > 0 && foundHours <= 60) {
           accumulatedTotalHours += foundHours;
           hasFoundExplicitTotals = true;
-          console.log(`[OCR Multi-Page Tracer] Found week total: +${foundHours} hrs (Current running sum: ${accumulatedTotalHours})`);
+          matchFoundForCurrentLine = true;
+          console.log(`[OCR Multi-Page Tracer] Week sheet match: +${foundHours} hrs (Running total: ${accumulatedTotalHours})`);
+          break; // 🔥 CRITICAL FIX: Stops testing secondary regexes against this same line!
+        }
+      }
+    }
+
+    // 🔥 COVERAGE UPGRADE: Catch standalone split values from multi-line stacks (e.g., Page 5 "Total" -> "8.00")
+    if (!matchFoundForCurrentLine && line.toLowerCase() === 'total' && i + 1 < lines.length) {
+      const nextLine = lines[i + 1];
+      if (/^\d+(?:\.\d+)?$/.test(nextLine)) {
+        const foundHours = parseFloat(nextLine);
+        if (foundHours > 0 && foundHours <= 60) {
+          accumulatedTotalHours += foundHours;
+          hasFoundExplicitTotals = true;
+          console.log(`[OCR Multi-Page Split Match] Standalone total segment catch: +${foundHours} hrs (Running total: ${accumulatedTotalHours})`);
+          i++; // Advance past index to skip reading the numeric row independently
         }
       }
     }
   }
 
-  // Cap validation threshold up to 250 total monthly hours to safely catch large 152.00 sums
+  // Cap validation threshold up to 250 total monthly hours to catch large sums safely
   if (hasFoundExplicitTotals && accumulatedTotalHours > 0 && accumulatedTotalHours <= 250) {
     console.log(`[OCR Aggregator Complete] Combined Document Output Matrix: ${accumulatedTotalHours} hrs`);
     return accumulatedTotalHours;
@@ -190,7 +208,7 @@ function parseHoursFromText(text) {
 
   // =========================================================================
   // PASS 2: ROW SUMMATION FALLBACK (STRICT BOUNDARY SECURITY)
-  // Runs if no "Total" labels are detected in the file layer text structure.
+  // Runs if no explicit total labels are captured in the file layer text structure.
   // =========================================================================
   console.log("[OCR Pass 2 Initiated] Explicit total rows missing. Running line-item extraction...");
   let aggregatedSum = 0;
