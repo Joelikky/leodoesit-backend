@@ -143,43 +143,61 @@ async function callCloudOCR(fileBuffer, mimeType) {
 }
 
 /**
- * Parse hours intelligently
+ * Parse hours intelligently with Multi-Page Aggregation support
  */
 function parseHoursFromText(text) {
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
 
-  // =====================================
-  // PASS 1: EXPLICIT TOTALS (HARDENED REGEX BLOCKS)
-  // =====================================
+  // =========================================================================
+  // PASS 1: MULTI-PAGE TOTALS ACCUMULATION (FIXED)
+  // Loops through the entire text block to add up multiple sub-totals 
+  // instead of returning early on the first match.
+  // =========================================================================
   const explicitTotalRegexes = [
     /(?:total\s*hours|total\s*hrs|total|hours\s*worked)\s*[:=\-_]?\s*(\d+(?:\.\d+)?)/i,
     /(\d+(?:\.\d+)?)\s*(?:total\s*hours|total\s*hrs|hours\s*total)/i
   ];
 
+  let accumulatedTotalHours = 0;
+  let hasFoundExplicitTotals = false;
+
   for (const line of lines) {
+    // Skip timestamp fields containing colons (e.g. "5:34 PM") to avoid false evaluation triggers
+    if (line.includes(':') && (line.toLowerCase().includes('pm') || line.toLowerCase().includes('am'))) {
+      continue;
+    }
+
     for (const regex of explicitTotalRegexes) {
       const match = line.match(regex);
       if (match && match[1]) {
         const foundHours = parseFloat(match[1]);
-        if (foundHours > 0 && foundHours <= 200) {
-          console.log(`[OCR Pass 1 Match] Found explicit summary hours value: ${foundHours}`);
-          return foundHours;
+        
+        // Strict baseline: Ignore 0-hour segments or year stamps (e.g. 2026) accidentally picked up
+        if (foundHours > 0 && foundHours <= 60) {
+          accumulatedTotalHours += foundHours;
+          hasFoundExplicitTotals = true;
+          console.log(`[OCR Multi-Page Tracer] Found week total: +${foundHours} hrs (Current running sum: ${accumulatedTotalHours})`);
         }
       }
     }
   }
 
-  // =====================================
-  // PASS 2: ROW SUMMATION (STRICT BOUNDARY SECURITY)
-  // =====================================
-  console.log("[OCR Pass 2 Initiated] Explicit total row missing. Running line-item extraction...");
+  // Cap validation threshold up to 250 total monthly hours to safely catch large 152.00 sums
+  if (hasFoundExplicitTotals && accumulatedTotalHours > 0 && accumulatedTotalHours <= 250) {
+    console.log(`[OCR Aggregator Complete] Combined Document Output Matrix: ${accumulatedTotalHours} hrs`);
+    return accumulatedTotalHours;
+  }
+
+  // =========================================================================
+  // PASS 2: ROW SUMMATION FALLBACK (STRICT BOUNDARY SECURITY)
+  // Runs if no "Total" labels are detected in the file layer text structure.
+  // =========================================================================
+  console.log("[OCR Pass 2 Initiated] Explicit total rows missing. Running line-item extraction...");
   let aggregatedSum = 0;
 
-  // Isolates floating points or plain digits while checking for absolute boundaries
   const looseRowRegex = /(?:^|\s)(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?(?:\s|$)/i;
 
   for (const line of lines) {
-    // 🛡️ SECURITY SHIELD: Bypass dates, ranges, text indices, or time-stamps (e.g., "10:30")
     if (
       line.includes('/') ||
       line.includes('-') ||
@@ -195,16 +213,15 @@ function parseHoursFromText(text) {
 
     if (match && match[1]) {
       const value = parseFloat(match[1]);
-      // Only aggregate standard tracking rows (between 4 and 60 hours per work period log)
       if (value >= 4 && value <= 60) {
         aggregatedSum += value;
-        console.log(`[OCR Row Matched] Extracted line value: ${value} hrs (Current running sum: ${aggregatedSum})`);
+        console.log(`[OCR Row Fallback Matched] Line value: ${value} hrs (Current sum: ${aggregatedSum})`);
       }
     }
   }
 
-  if (aggregatedSum > 0 && aggregatedSum <= 200) {
-    console.log(`[OCR Processing Complete] Combined calculation output: ${aggregatedSum} hrs`);
+  if (aggregatedSum > 0 && aggregatedSum <= 250) {
+    console.log(`[OCR Processing Complete] Combined row calculation output: ${aggregatedSum} hrs`);
     return aggregatedSum;
   }
 
