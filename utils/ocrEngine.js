@@ -148,24 +148,21 @@ async function callCloudOCR(fileBuffer, mimeType) {
 function parseHoursFromText(text) {
   // =========================================================================
   // PASS 1: TARGETED KEYWORD-TRAILING NUMBER EXTRACTOR
-  // Isolates exact numbers trailing the standalone "Total" matrix token.
   // =========================================================================
   const targetTotalRegex = /\bTotal\b\s*[:=\-_]?\s*\b(\d+(?:\.\d+)?)\b/gi;
   
-  // CRITICAL FIX: Reset the global execution index to index position 0 
-  // on every subsequent function initialization invocation.
+  // Explicitly clear pointer state cache on hot loops
   targetTotalRegex.lastIndex = 0;
 
   let accumulatedTotalHours = 0;
   let hasFoundExplicitTotals = false;
   let match;
 
-  // Scan the entire text stream globally for individual instances of "Total XX.XX"
   while ((match = targetTotalRegex.exec(text)) !== null) {
     if (match[1]) {
       const foundHours = parseFloat(match[1]);
       
-      // Ensure values correspond to valid individual weekly limits (between 4 and 60 hours)
+      // Match individual sheets (between 4 and 60 hours)
       if (foundHours >= 4 && foundHours <= 60) {
         accumulatedTotalHours += foundHours;
         hasFoundExplicitTotals = true;
@@ -174,7 +171,7 @@ function parseHoursFromText(text) {
     }
   }
 
-  // Cap validation threshold up to 250 total monthly hours to catch large sums safely
+  // Cap validation threshold safely up to 250 total monthly hours
   if (hasFoundExplicitTotals && accumulatedTotalHours > 0 && accumulatedTotalHours <= 250) {
     console.log(`[OCR Aggregator Complete] Combined Document Output Matrix: ${accumulatedTotalHours} hrs`);
     return accumulatedTotalHours;
@@ -182,7 +179,6 @@ function parseHoursFromText(text) {
 
   // =========================================================================
   // PASS 2: ROW SUMMATION FALLBACK (STRICT BOUNDARY SECURITY)
-  // Runs if no explicit total labels are captured in the file layer text structure.
   // =========================================================================
   console.log("[OCR Pass 2 Initiated] Explicit total rows missing. Running line-item extraction...");
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
