@@ -150,10 +150,11 @@ function parseHoursFromText(text) {
   // PASS 1: TARGETED KEYWORD-TRAILING NUMBER EXTRACTOR
   // Isolates exact numbers trailing the standalone "Total" matrix token.
   // =========================================================================
-  
-  // This looks specifically for the word "Total" and captures standalone positive float values
-  // nearby while ignoring year patterns (e.g., 2026) or table index values.
   const targetTotalRegex = /\bTotal\b\s*[:=\-_]?\s*\b(\d+(?:\.\d+)?)\b/gi;
+  
+  // CRITICAL FIX: Reset the global execution index to index position 0 
+  // on every subsequent function initialization invocation.
+  targetTotalRegex.lastIndex = 0;
 
   let accumulatedTotalHours = 0;
   let hasFoundExplicitTotals = false;
