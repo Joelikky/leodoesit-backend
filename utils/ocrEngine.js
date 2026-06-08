@@ -146,36 +146,29 @@ async function callCloudOCR(fileBuffer, mimeType) {
  * Parse hours intelligently with Multi-Page Aggregation support
  */
 function parseHoursFromText(text) {
-  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+  // =========================================================================
+  // PASS 1: TARGETED KEYWORD-TRAILING NUMBER EXTRACTOR
+  // Isolates exact numbers trailing the standalone "Total" matrix token.
+  // =========================================================================
+  
+  // This looks specifically for the word "Total" and captures standalone positive float values
+  // nearby while ignoring year patterns (e.g., 2026) or table index values.
+  const targetTotalRegex = /\bTotal\b\s*[:=\-_]?\s*\b(\d+(?:\.\d+)?)\b/gi;
 
-  // =========================================================================
-  // PASS 1: MATRIX-AWARE LINE SEGMENT TOTAL ACCUMULATOR
-  // Handles side-by-side clustered tokens cleanly without duplicate tracking drops
-  // =========================================================================
   let accumulatedTotalHours = 0;
   let hasFoundExplicitTotals = false;
+  let match;
 
-  for (const line of lines) {
-    const lowerLine = line.toLowerCase();
-    
-    // Safely isolate lines dedicated to tracking the 'Total' keywords
-    // Filters out metadata or structural table header definitions
-    if (lowerLine.includes('total') && !lowerLine.includes('tax') && !lowerLine.includes('cost center')) {
+  // Scan the entire text stream globally for individual instances of "Total XX.XX"
+  while ((match = targetTotalRegex.exec(text)) !== null) {
+    if (match[1]) {
+      const foundHours = parseFloat(match[1]);
       
-      // Match all distinct standalone numbers on this matching row
-      const numbersInRow = line.match(/\b\d+(?:\.\d+)?\b/g);
-      
-      if (numbersInRow) {
-        numbersInRow.forEach(numStr => {
-          const foundHours = parseFloat(numStr);
-          
-          // Filter out typical non-hour constants like year thresholds (e.g. 2026) or system IDs
-          if (foundHours >= 4 && foundHours <= 60) {
-            accumulatedTotalHours += foundHours;
-            hasFoundExplicitTotals = true;
-            console.log(`[OCR Multi-Page Tracer] Found sheet total item: +${foundHours} hrs (Running total: ${accumulatedTotalHours})`);
-          }
-        });
+      // Ensure values correspond to valid individual weekly limits (between 4 and 60 hours)
+      if (foundHours >= 4 && foundHours <= 60) {
+        accumulatedTotalHours += foundHours;
+        hasFoundExplicitTotals = true;
+        console.log(`[OCR Multi-Page Tracer] Found sheet total item: +${foundHours} hrs (Running total: ${accumulatedTotalHours})`);
       }
     }
   }
@@ -191,6 +184,7 @@ function parseHoursFromText(text) {
   // Runs if no explicit total labels are captured in the file layer text structure.
   // =========================================================================
   console.log("[OCR Pass 2 Initiated] Explicit total rows missing. Running line-item extraction...");
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
   let aggregatedSum = 0;
   const looseRowRegex = /(?:^|\s)(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?(?:\s|$)/i;
 
