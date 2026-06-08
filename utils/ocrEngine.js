@@ -143,51 +143,78 @@ async function callCloudOCR(fileBuffer, mimeType) {
 }
 
 function parseHoursFromText(text) {
-  // PASS 1 - Weekly totals
+  console.log("===== OCR PARSER V3 DEPLOYED =====");
 
-  const weeklyTotalRegex = /\bTotal\s+(\d+(?:\.\d+)?)\b/gi;
+  // ==========================================================
+  // PRIMARY MODE
+  // Sum hours from date rows
+  // Example:
+  // 3/2/2026 8.00
+  // 3/10/2026 0.00
+  // ==========================================================
 
-  let total = 0;
+  const dateHourRegex =
+    /\b\d{1,2}\/\d{1,2}\/\d{4}\s+(\d+(?:\.\d+)?)\b/g;
+
   let match;
-  let count = 0;
+  let totalHours = 0;
+  let matchedRows = 0;
 
-  while ((match = weeklyTotalRegex.exec(text)) !== null) {
+  while ((match = dateHourRegex.exec(text)) !== null) {
     const hours = parseFloat(match[1]);
 
-    if (hours >= 0 && hours <= 60) {
-      total += hours;
-      count++;
+    if (!isNaN(hours) && hours >= 0 && hours <= 24) {
+      totalHours += hours;
+      matchedRows++;
 
       console.log(
-        `[OCR Weekly Total] ${hours} hrs (Running: ${total})`
+        `[OCR Date Row] +${hours} hrs (Running Total: ${totalHours})`
       );
     }
   }
 
-  if (count > 0) {
+  if (matchedRows > 0) {
     console.log(
-      `[OCR Aggregator Complete] ${total} hrs`
+      `[OCR Aggregation Complete] ${matchedRows} rows => ${totalHours} hrs`
     );
 
-    return total;
+    return totalHours;
   }
 
-  // PASS 2 - Sum date rows
+  // ==========================================================
+  // FALLBACK MODE
+  // If OCR formatting breaks dates, look for all hour values
+  // ==========================================================
 
-  const rowRegex =
-    /\b\d{1,2}\/\d{1,2}\/\d{4}\s+(\d+(?:\.\d+)?)\b/g;
+  console.log(
+    "[OCR Fallback] Date rows not found. Running numeric extraction..."
+  );
 
-  let rowTotal = 0;
+  const hourRegex = /\b(?:0|4|8|10|12|16|20|24)\.00\b/g;
 
-  while ((match = rowRegex.exec(text)) !== null) {
-    const hours = parseFloat(match[1]);
+  let fallbackTotal = 0;
+  let fallbackCount = 0;
 
-    if (hours >= 0 && hours <= 24) {
-      rowTotal += hours;
-    }
+  while ((match = hourRegex.exec(text)) !== null) {
+    const hours = parseFloat(match[0]);
+
+    fallbackTotal += hours;
+    fallbackCount++;
   }
 
-  return rowTotal > 0 ? rowTotal : null;
+  if (fallbackCount > 0 && fallbackTotal <= 400) {
+    console.log(
+      `[OCR Fallback Complete] ${fallbackCount} values => ${fallbackTotal} hrs`
+    );
+
+    return fallbackTotal;
+  }
+
+  console.warn(
+    "[OCR Parser] Unable to determine hours from OCR output."
+  );
+
+  return null;
 }
 module.exports = {
   extractHoursFromAttachment
