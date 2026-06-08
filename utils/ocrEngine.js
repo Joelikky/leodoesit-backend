@@ -149,41 +149,33 @@ function parseHoursFromText(text) {
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
 
   // =========================================================================
-  // PASS 1: SAFE MULTI-PAGE SHEET TOTAL ACCUMULATOR
+  // PASS 1: MATRIX-AWARE LINE SEGMENT TOTAL ACCUMULATOR
+  // Handles side-by-side clustered tokens cleanly without duplicate tracking drops
   // =========================================================================
-  const explicitTotalRegexes = [
-    /(?:total\s*hours|total\s*hrs|total|hours\s*worked)\s*[:=\-_]?\s*(\d+(?:\.\d+)?)/i,
-    /(\d+(?:\.\d+)?)\s*(?:total\s*hours|total\s*hrs|hours\s*total)/i
-  ];
-
   let accumulatedTotalHours = 0;
   let hasFoundExplicitTotals = false;
 
-  for (let i = 0; i < lines.length; i++) {
-    const currentLine = lines[i];
-    const nextLine = (i + 1 < lines.length) ? lines[i + 1] : "";
-    const evaluationFrame = `${currentLine} ${nextLine}`.trim();
-
-    for (const regex of explicitTotalRegexes) {
-      // Check current line first, then fall back to testing the combined evaluation frame
-      let match = currentLine.match(regex);
-      if (!match) {
-        match = evaluationFrame.match(regex);
-      }
-
-      if (match && match[1]) {
-        const foundHours = parseFloat(match[1]);
-        
-        // Ensure values correspond to a weekly period boundary sheet (between 4 and 60 hours)
-        if (foundHours > 0 && foundHours <= 60) {
-          accumulatedTotalHours += foundHours;
-          hasFoundExplicitTotals = true;
-          console.log(`[OCR Multi-Page Tracer] Week sheet match: +${foundHours} hrs (Running total: ${accumulatedTotalHours})`);
+  for (const line of lines) {
+    const lowerLine = line.toLowerCase();
+    
+    // Safely isolate lines dedicated to tracking the 'Total' keywords
+    // Filters out metadata or structural table header definitions
+    if (lowerLine.includes('total') && !lowerLine.includes('tax') && !lowerLine.includes('cost center')) {
+      
+      // Match all distinct standalone numbers on this matching row
+      const numbersInRow = line.match(/\b\d+(?:\.\d+)?\b/g);
+      
+      if (numbersInRow) {
+        numbersInRow.forEach(numStr => {
+          const foundHours = parseFloat(numStr);
           
-          // Index skipping optimization removed here to allow dense block token scanning 
-          // without skipping over adjacent text-matrix elements.
-          break; 
-        }
+          // Filter out typical non-hour constants like year thresholds (e.g. 2026) or system IDs
+          if (foundHours >= 4 && foundHours <= 60) {
+            accumulatedTotalHours += foundHours;
+            hasFoundExplicitTotals = true;
+            console.log(`[OCR Multi-Page Tracer] Found sheet total item: +${foundHours} hrs (Running total: ${accumulatedTotalHours})`);
+          }
+        });
       }
     }
   }
@@ -200,7 +192,6 @@ function parseHoursFromText(text) {
   // =========================================================================
   console.log("[OCR Pass 2 Initiated] Explicit total rows missing. Running line-item extraction...");
   let aggregatedSum = 0;
-
   const looseRowRegex = /(?:^|\s)(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?(?:\s|$)/i;
 
   for (const line of lines) {
