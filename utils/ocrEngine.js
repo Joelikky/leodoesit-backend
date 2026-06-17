@@ -146,43 +146,41 @@ async function callCloudOCR(fileBuffer, mimeType) {
  * Parse hours intelligently with Multi-Page Aggregation support
  */
 function parseHoursFromText(text) {
-  console.log("===== OCR PARSER V4 DEPLOYED =====");
+  // =========================================================================
+  // PASS 1: TARGETED KEYWORD-TRAILING NUMBER EXTRACTOR
+  // =========================================================================
+  const targetTotalRegex = /\bTotal\b\s*[:=\-_]?\s*\b(\d+(?:\.\d+)?)\b/gi;
+  
+  // Explicitly clear pointer state cache on hot loops
+  targetTotalRegex.lastIndex = 0;
 
   let accumulatedTotalHours = 0;
   let hasFoundExplicitTotals = false;
+  let match;
 
-  // Split the layout text by the word boundary token "Total"
-  const totalSegments = text.split(/\bTotal\b/i);
-
-  // Skip the first segment (which contains data leading up to the first total keyword)
-  for (let i = 1; i < totalSegments.length; i++) {
-    const trailingContext = totalSegments[i].trim();
-    
-    // Snag the first standalone number string that immediately surfaces following the split boundary
-    const numberMatch = trailingContext.match(/^\s*[:=\-_]?\s*\b(\d+(?:\.\d+)?)\b/);
-    
-    if (numberMatch && numberMatch[1]) {
-      const foundHours = parseFloat(numberMatch[1]);
+  while ((match = targetTotalRegex.exec(text)) !== null) {
+    if (match[1]) {
+      const foundHours = parseFloat(match[1]);
       
-      // Ensure the captured item meets standard individual weekly tracking constraints (4 to 60 hours)
+      // Match individual sheets (between 4 and 60 hours)
       if (foundHours >= 4 && foundHours <= 60) {
         accumulatedTotalHours += foundHours;
         hasFoundExplicitTotals = true;
-        console.log(`[OCR Multi-Page Tracer] Segment total item match: +${foundHours} hrs (Running total: ${accumulatedTotalHours})`);
+        console.log(`[OCR Multi-Page Tracer] Found sheet total item: +${foundHours} hrs (Running total: ${accumulatedTotalHours})`);
       }
     }
   }
 
-  // Cap validation threshold up to 250 total monthly hours to catch large sums safely
+  // Cap validation threshold safely up to 250 total monthly hours
   if (hasFoundExplicitTotals && accumulatedTotalHours > 0 && accumulatedTotalHours <= 250) {
     console.log(`[OCR Aggregator Complete] Combined Document Output Matrix: ${accumulatedTotalHours} hrs`);
     return accumulatedTotalHours;
   }
 
   // =========================================================================
-  // FALLBACK MODE: LINE ROW EXTRACTION
+  // PASS 2: ROW SUMMATION FALLBACK (STRICT BOUNDARY SECURITY)
   // =========================================================================
-  console.log("[OCR Fallback] Explicit segmented total tokens missing. Running line extraction...");
+  console.log("[OCR Pass 2 Initiated] Explicit total rows missing. Running line-item extraction...");
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
   let aggregatedSum = 0;
   const looseRowRegex = /(?:^|\s)(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?(?:\s|$)/i;
