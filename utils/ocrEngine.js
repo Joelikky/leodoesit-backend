@@ -34,33 +34,44 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
       const { PdfReader } = require('pdfreader');
 
       extractedText = await new Promise((resolve, reject) => {
-        let rows = {};
+        let fullText = "";
+        let currentPageRows = {};
+
+        // Helper function to process and append a page's rows to fullText
+        const flushPageText = (rowsObj) => {
+          let pageText = "";
+          const sortedYKeys = Object.keys(rowsObj).sort((a, b) => parseFloat(a) - parseFloat(b));
+
+          sortedYKeys.forEach(y => {
+            const rowLine = rowsObj[y]
+              .sort((a, b) => a.x - b.x)
+              .map(el => el.text)
+              .join(" ");
+
+            pageText += rowLine + "\n";
+          });
+          return pageText;
+        };
 
         new PdfReader().parseBuffer(fileBuffer, (err, item) => {
           if (err) {
             reject(err);
           } else if (!item) {
-            let fullText = "";
-            const sortedYKeys = Object.keys(rows).sort((a, b) => parseFloat(a) - parseFloat(b));
-
-            sortedYKeys.forEach(y => {
-              const rowLine = rows[y]
-                .sort((a, b) => a.x - b.x)
-                .map(el => el.text)
-                .join(" ");
-
-              fullText += rowLine + "\n";
-            });
-
+            // End of entire document -> flush the absolute final page
+            fullText += flushPageText(currentPageRows);
             resolve(fullText);
+          } else if (item.page) {
+            // New page indicator hit -> flush previous page coordinate cache cleanly
+            fullText += flushPageText(currentPageRows);
+            currentPageRows = {}; // Reset text block matrix tracking maps for the new page
           } else if (item.text) {
-            const yNormalized = Math.round(item.y * 2) / 2;
+            const yNormalized = Math.round(item.y * 100) / 100; // Increase precision for tightly structured tables
 
-            if (!rows[yNormalized]) {
-              rows[yNormalized] = [];
+            if (!currentPageRows[yNormalized]) {
+              currentPageRows[yNormalized] = [];
             }
 
-            rows[yNormalized].push({
+            currentPageRows[yNormalized].push({
               text: item.text,
               x: item.x
             });
@@ -149,9 +160,9 @@ function parseHoursFromText(text) {
   // =========================================================================
   // PASS 1: TARGETED KEYWORD-TRAILING NUMBER EXTRACTOR
   // =========================================================================
-  const targetTotalRegex = /\bTotal\b\s*[:=\-_]?\s*\b(\d+(?:\.\d+)?)\b/gi;
+  // Fixed Regex: Accounts for multi-word or space separated matrix cells like "Total 40.00"
+  const targetTotalRegex = /\bTotal\b\s*[:=\-_]?\s*(\d+(?:\.\d+)?)/gi;
   
-  // Explicitly clear pointer state cache on hot loops
   targetTotalRegex.lastIndex = 0;
 
   let accumulatedTotalHours = 0;
@@ -162,7 +173,7 @@ function parseHoursFromText(text) {
     if (match[1]) {
       const foundHours = parseFloat(match[1]);
       
-      // Match individual sheets (between 4 and 60 hours)
+      // Match individual weekly blocks safely
       if (foundHours >= 4 && foundHours <= 60) {
         accumulatedTotalHours += foundHours;
         hasFoundExplicitTotals = true;
