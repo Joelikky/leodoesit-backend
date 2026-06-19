@@ -37,7 +37,7 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
         let fullText = "";
         let currentPageRows = {};
 
-        // Helper function to process and append a page's rows to fullText
+        // Helper function to process and append a page's rows cleanly to fullText
         const flushPageText = (rowsObj) => {
           let pageText = "";
           const sortedYKeys = Object.keys(rowsObj).sort((a, b) => parseFloat(a) - parseFloat(b));
@@ -57,15 +57,15 @@ const extractHoursFromAttachment = async (fileBuffer, mimeType) => {
           if (err) {
             reject(err);
           } else if (!item) {
-            // End of entire document -> flush the absolute final page
+            // End of entire document -> flush the absolute final page block matrix
             fullText += flushPageText(currentPageRows);
             resolve(fullText);
           } else if (item.page) {
             // New page indicator hit -> flush previous page coordinate cache cleanly
             fullText += flushPageText(currentPageRows);
-            currentPageRows = {}; // Reset text block matrix tracking maps for the new page
+            currentPageRows = {}; // Wipes text block matrix maps for the incoming fresh page layer
           } else if (item.text) {
-            const yNormalized = Math.round(item.y * 100) / 100; // Increase precision for tightly structured tables
+            const yNormalized = Math.round(item.y * 100) / 100; // Fixed resolution coordinate tracking
 
             if (!currentPageRows[yNormalized]) {
               currentPageRows[yNormalized] = [];
@@ -160,7 +160,6 @@ function parseHoursFromText(text) {
   // =========================================================================
   // PASS 1: TARGETED KEYWORD-TRAILING NUMBER EXTRACTOR
   // =========================================================================
-  // Enhanced regular expression targeting clean alphanumeric total definitions
   const targetTotalRegex = /\bTotal\s*(?:hours|hrs|hr)?\b\s*[:=\-_]?\s*(\d+(?:\.\d+)?)/gi;
   
   targetTotalRegex.lastIndex = 0;
@@ -172,10 +171,22 @@ function parseHoursFromText(text) {
     if (match[1]) {
       const foundHours = parseFloat(match[1]);
       
-      // Match safe logical boundaries per layout block
+      // Look back to inspect string bounds context to identify header noise entries
+      const matchIndex = match.index;
+      const localContext = text.substring(Math.max(0, matchIndex - 15), matchIndex + match[0].length).toLowerCase();
+      
+      // If "total hrs" is just a standard column label row, look downstream to confirm table structural markers
+      if (localContext.includes('total hrs') && !localContext.includes('total hours') && foundHours < 10) {
+        const downstreamText = text.substring(matchIndex, matchIndex + 40).toLowerCase();
+        if (downstreamText.includes('overtime') || downstreamText.includes('description')) {
+          console.log(`[OCR Filter] Bypassed column cell header match artifact: "${match[0]}"`);
+          continue;
+        }
+      }
+
       if (foundHours >= 4 && foundHours <= 168) {
         trackedMatches.push(foundHours);
-        console.log(`[OCR Multi-Page Tracer] Detected potential candidate row entry: ${foundHours} hrs`);
+        console.log(`[OCR Multi-Page Tracer] Logged target calculation value: ${foundHours} hrs`);
       }
     }
   }
@@ -183,24 +194,23 @@ function parseHoursFromText(text) {
   if (trackedMatches.length > 0) {
     let finalCalculation = 0;
 
-    // Check if the file is a unified single-sheet document layout where the numbers repeat horizontally,
-    // or an explicitly chunked multi-page document matrix.
-    const uniqueValues = [...new Set(trackedMatches)];
-    
-    if (trackedMatches.length === 2 && uniqueValues.length === 1) {
-      // Handles layouts like "Total hours [40] ... [40]" from single sheet summary blocks
-      finalCalculation = uniqueValues[0];
-    } else if (trackedMatches.length > 2 && uniqueValues.length <= 2) {
-      // Handles cases where isolated values overlap matching headers on a single page
+    // SCENARIO A: Single-page document form matching exactly 2 different entries (header '8' vs grand summary '40')
+    if (trackedMatches.length === 2) {
       finalCalculation = Math.max(...trackedMatches);
-    } else {
-      // Safe fallback aggregation sequence for legitimate multi-page files
+      console.log(`[OCR Single-Page Shield] Dual match resolved safely. Chosen maximum: ${finalCalculation} hrs`);
+    } 
+    // SCENARIO B: Handles duplicate text strings ("Total Hours 40 ... 40") safely without double counting
+    else if (trackedMatches.length === 2 && trackedMatches[0] === trackedMatches[1]) {
+      finalCalculation = trackedMatches[0];
+    }
+    // SCENARIO C: Multiple historical items -> Execute chronological aggregation logic cleanly (Multi-Page PDF mode)
+    else {
       finalCalculation = trackedMatches.reduce((sum, value) => sum + value, 0);
     }
 
-    // Enforce high-level monthly limit check boundary protection
+    // Limit evaluation logic check threshold safeguard cap
     if (finalCalculation > 0 && finalCalculation <= 250) {
-      console.log(`[OCR Aggregator Complete] Combined Document Output Matrix: ${finalCalculation} hrs`);
+      console.log(`[OCR Aggregator Complete] Final Processing Matrix Yield: ${finalCalculation} hrs`);
       return finalCalculation;
     }
   }
