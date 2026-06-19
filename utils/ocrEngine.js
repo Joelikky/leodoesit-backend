@@ -191,34 +191,40 @@ function parseHoursFromText(text) {
     }
   }
 
+  // FIXED: If Pass 1 located structured keyword lines, evaluate and RETURN IMMEDIATELY.
   if (trackedMatches.length > 0) {
     let finalCalculation = 0;
 
-    // SCENARIO A: Single-page document form matching exactly 2 different entries (header '8' vs grand summary '40')
-    if (trackedMatches.length === 2) {
+    // SCENARIO A: Dual mismatch form layout (header row '8' vs grand summary bottom '40') -> Safely select the maximum summary row
+    if (trackedMatches.length === 2 && trackedMatches[0] !== trackedMatches[1]) {
       finalCalculation = Math.max(...trackedMatches);
       console.log(`[OCR Single-Page Shield] Dual match resolved safely. Chosen maximum: ${finalCalculation} hrs`);
     } 
-    // SCENARIO B: Handles duplicate text strings ("Total Hours 40 ... 40") safely without double counting
+    // SCENARIO B: Handles exact duplicate strings across layouts ("Total Hours 40 ... 40") safely without duplicate tracking
     else if (trackedMatches.length === 2 && trackedMatches[0] === trackedMatches[1]) {
       finalCalculation = trackedMatches[0];
     }
-    // SCENARIO C: Multiple historical items -> Execute chronological aggregation logic cleanly (Multi-Page PDF mode)
+    // SCENARIO C: Clean, singular value total detected from layout payload parsing
+    else if (trackedMatches.length === 1) {
+      finalCalculation = trackedMatches[0];
+      console.log(`[OCR Single-Page Match] Standalone total identified cleanly: ${finalCalculation} hrs`);
+    }
+    // SCENARIO D: Legitimate multi-page document blocks -> aggregate all metrics cleanly
     else {
       finalCalculation = trackedMatches.reduce((sum, value) => sum + value, 0);
     }
 
-    // Limit evaluation logic check threshold safeguard cap
+    // Threshold limit enforcement barrier block validation
     if (finalCalculation > 0 && finalCalculation <= 250) {
-      console.log(`[OCR Aggregator Complete] Final Processing Matrix Yield: ${finalCalculation} hrs`);
+      console.log(`[OCR Aggregator Complete] Final Processing Matrix Yield via Pass 1: ${finalCalculation} hrs`);
       return finalCalculation;
     }
   }
 
   // =========================================================================
-  // PASS 2: ROW SUMMATION FALLBACK (STRICT BOUNDARY SECURITY)
+  // PASS 2: ROW SUMMATION FALLBACK (ONLY RUNS IF PASS 1 MATCH COUNT IS 0)
   // =========================================================================
-  console.log("[OCR Pass 2 Initiated] Explicit total rows missing. Running line-item extraction...");
+  console.log("[OCR Pass 2 Initiated] Explicit total rows missing completely. Running line-item extraction...");
   const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
   let aggregatedSum = 0;
   const looseRowRegex = /(?:^|\s)(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours)?(?:\s|$)/i;
@@ -247,7 +253,7 @@ function parseHoursFromText(text) {
   }
 
   if (aggregatedSum > 0 && aggregatedSum <= 250) {
-    console.log(`[OCR Processing Complete] Combined row calculation output: ${aggregatedSum} hrs`);
+    console.log(`[OCR Processing Complete] Combined row calculation fallback output: ${aggregatedSum} hrs`);
     return aggregatedSum;
   }
 
