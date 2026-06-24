@@ -160,7 +160,9 @@ router.post('/', async (req, res) => {
             role: data.role || 'Consultant',
             hours,
             billingRate: rate,
-            billingPeriod: `${new Date(data.period_start).toLocaleDateString('en-US')} - ${new Date(data.period_end).toLocaleDateString('en-US')}`
+            billingPeriod: `${new Date(data.period_start).toLocaleDateString('en-US')} - ${new Date(data.period_end).toLocaleDateString('en-US')}`,
+            amountPaid: 0,
+            balanceDue: hours * rate
         });
 
         // S3 Storage Allocation
@@ -244,28 +246,117 @@ router.get('/:id/download', async (req, res) => {
 });
 
 // ==========================================================================
-// PAY INVOICE
+// PAY INVOICE (SUPPORTS PARTIAL & FULL PAYMENTS)
 // ==========================================================================
 router.put('/:id/pay', async (req, res) => {
     const { id } = req.params;
+    const { amountPaidEntered } = req.body; // Expects a generic context number from frontend input
+
+    if (amountPaidEntered === undefined || isNaN(amountPaidEntered) || Number(amountPaidEntered) <= 0) {
+        return res.status(400).json({ success: false, error: "A valid positive numeric payment amount is required." });
+    }
 
     try {
+        await db.query('BEGIN');
+
+        // 1. Gather all invoice criteria needed to accurately compile the PDF engine parameters
+        const invoiceQuery = `
+            SELECT 
+                i.id, i.invoice_number, i.hours_billed, i.hourly_rate_applied, i.due_date,
+                COALESCE(i.amount_paid, 0) AS current_amount_paid, i.client_id, i.timesheet_id,
+                COALESCE(i.amount_invoiced, (i.hours_billed * i.hourly_rate_applied)) AS total_amount,
+                t.period_start, t.period_end, u.first_name, u.last_name,
+                e.invoice_rate, e.role, e.vendor_for, e.net_terms, e.vendor_address AS client_address,
+                c.company_name AS client_name, ten.domain_prefix
+            FROM invoices i
+            JOIN timesheets t ON i.timesheet_id = t.id
+            JOIN users u ON t.user_id = u.id
+            LEFT JOIN employee_details e ON u.id = e.user_id
+            JOIN clients c ON c.id = i.client_id
+            JOIN tenants ten ON u.tenant_id = ten.id
+            WHERE i.id = $1;
+        `;
+        const invoiceCheck = await db.query(invoiceQuery, [id]);
+
+        if (invoiceCheck.rowCount === 0) {
+            await db.query('ROLLBACK');
+            return res.status(404).json({ success: false, error: "Invoice record not found." });
+        }
+
+        const invoice = invoiceCheck.rows[0];
+        const totalAmount = parseFloat(invoice.total_amount);
+        const newAmountPaid = parseFloat(invoice.current_amount_paid) + parseFloat(amountPaidEntered);
+        const balanceDue = totalAmount - newAmountPaid;
+
+        // Establish string configuration match for status state logs
+        let newStatus = 'PARTIALLY PAID';
+        if (balanceDue <= 0.01) {
+            newStatus = 'PAID';
+        }
+
+        const formatDate = (dateObj) => {
+            const d = dateObj.getDate().toString().padStart(2, '0');
+            const m = dateObj.toLocaleString('default', { month: 'short' });
+            const y = dateObj.getFullYear();
+            return `${d} ${m} ${y}`;
+        };
+
+        const today = new Date();
+        const periodStartObj = new Date(invoice.period_start);
+        const monthName = periodStartObj.toLocaleString('en-US', { month: 'long' }).toLowerCase();
+        const year = periodStartObj.getFullYear();
+        const cleanEmployeeName = `${invoice.first_name}_${invoice.last_name}`.replace(/\s+/g, '_').toLowerCase();
+        const cleanClientName = invoice.client_name.replace(/\s+/g, '_').toLowerCase();
+        const pdfFileName = `${cleanEmployeeName}_${monthName}_${year}_${cleanClientName}_invoice.pdf`;
+
+        // 2. Generate updated layout matrix PDF
+        const updatedPdfBuffer = await generateInvoiceBuffer({
+            companyName: invoice.domain_prefix === 'gandiva' ? 'Gandiva Insights' : 'Leo Does IT Inc.',
+            invoiceNumber: invoice.invoice_number,
+            invoiceDate: formatDate(today),
+            netTerms: String(invoice.net_terms || 'Net 30'),
+            dueDate: formatDate(new Date(invoice.due_date)),
+            clientName: invoice.client_name,
+            clientAddress: invoice.client_address || '',
+            vendorFor: invoice.vendor_for || 'N/A',
+            contractorName: `${invoice.first_name} ${invoice.last_name}`,
+            role: invoice.role || 'Consultant',
+            hours: parseFloat(invoice.hours_billed),
+            billingRate: parseFloat(invoice.hourly_rate_applied),
+            billingPeriod: `${new Date(invoice.period_start).toLocaleDateString('en-US')} - ${new Date(invoice.period_end).toLocaleDateString('en-US')}`,
+            amountPaid: newAmountPaid,
+            balanceDue: balanceDue < 0 ? 0 : balanceDue
+        });
+
+        // 3. Re-upload over the top of S3 object key
+        const newS3Url = await uploadInvoiceToS3(updatedPdfBuffer, pdfFileName);
+        if (!newS3Url) {
+            await db.query('ROLLBACK');
+            return res.status(500).json({ success: false, error: "Failed to upload updated PDF revision to storage layers." });
+        }
+
+        // 4. Update core ledger metrics entries row
         const updateQuery = `
             UPDATE invoices
-            SET status = 'PAID',
-                amount_paid = COALESCE(amount_invoiced, (hours_billed * hourly_rate_applied))
-            WHERE id = $1
+            SET status = $1,
+                amount_paid = $2,
+                file_url = $3
+            WHERE id = $4
             RETURNING *;
         `;
-        const result = await db.query(updateQuery, [id]);
+        const result = await db.query(updateQuery, [newStatus, newAmountPaid, newS3Url, id]);
+
+        await db.query('COMMIT');
 
         res.json({
             success: true,
-            message: "Invoice marked as PAID",
+            message: `Payment registered successfully. Invoice status changed to ${newStatus}.`,
+            balanceDue: balanceDue < 0 ? 0 : balanceDue,
             data: result.rows[0]
         });
 
     } catch (err) {
+        await db.query('ROLLBACK');
         console.error("Pay Invoice Error:", err);
         res.status(500).json({ success: false, error: err.message });
     }

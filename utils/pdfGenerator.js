@@ -30,6 +30,20 @@ const generateInvoiceBuffer = async (data) => {
         maximumFractionDigits: 2
     });
 
+    // Extract partial payment details
+    const amountPaid = parseFloat(data.amountPaid || 0);
+    const balanceDue = data.balanceDue !== undefined ? parseFloat(data.balanceDue) : (rawAmount - amountPaid);
+
+    const formattedPaid = amountPaid.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+
+    const formattedBalance = balanceDue.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+
     const invoiceDateStr =
         data.invoiceDate ||
         new Date().toLocaleDateString('en-US', {
@@ -209,14 +223,21 @@ const generateInvoiceBuffer = async (data) => {
                 </tbody>
             </table>
 
-            <table class="total-table">
+            <table class="total-table" style="margin-top: 20px;">
+                <tr>
+                    <td style="width: 50%;"></td>
+                    <td class="total-label" style="width: 25%; text-align: right; padding-right: 15px;">TOTAL AMOUNT:</td>
+                    <td class="total-amount" style="width: 25%; font-weight: normal;">$${formattedAmount}</td>
+                </tr>
                 <tr>
                     <td></td>
+                    <td class="total-label" style="text-align: right; padding-right: 15px; color: #27ae60; border-top: none;">AMOUNT PAID:</td>
+                    <td class="total-amount" style="color: #27ae60; font-weight: normal; border-top: none;">-$${formattedPaid}</td>
+                </tr>
+                <tr style="background-color: #fcfcfc;">
                     <td></td>
-                    <td class="total-label">TOTAL</td>
-                    <td class="total-amount">
-                        $${formattedAmount}
-                    </td>
+                    <td class="total-label" style="text-align: right; padding-right: 15px; font-weight: bold; border-top: 2px solid #000;">BALANCE DUE:</td>
+                    <td class="total-amount" style="font-weight: bold; border-top: 2px solid #000; color: #c0392b;">$${formattedBalance}</td>
                 </tr>
             </table>
 
@@ -400,16 +421,20 @@ const generateInvoiceBuffer = async (data) => {
             <div class="totals-container">
                 <table class="totals-table">
                     <tr>
-                        <td>Sub Total</td>
-                        <td>$${formattedAmount}</td>
+                        <td style="padding: 6px 10px;">Sub Total</td>
+                        <td style="padding: 6px 10px;">$${formattedAmount}</td>
                     </tr>
                     <tr>
-                        <td><strong>Total</strong></td>
-                        <td><strong>$${formattedAmount}</strong></td>
+                        <td style="padding: 6px 10px;"><strong>Total Invoice Amount</strong></td>
+                        <td style="padding: 6px 10px;"><strong>$${formattedAmount}</strong></td>
                     </tr>
-                    <tr class="balance-row">
-                        <td>Balance Due</td>
-                        <td>$${formattedAmount}</td>
+                    <tr style="color: #27ae60;">
+                        <td style="padding: 6px 10px;">Amount Paid</td>
+                        <td style="padding: 6px 10px;">-$${formattedPaid}</td>
+                    </tr>
+                    <tr class="balance-row" style="font-size: 14px;">
+                        <td style="padding: 10px; color: #c0392b;">Balance Due</td>
+                        <td style="padding: 10px; color: #c0392b;"><strong>$${formattedBalance}</strong></td>
                     </tr>
                 </table>
             </div>
